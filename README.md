@@ -1,5 +1,7 @@
 # QuantumNeuralStates
 
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://rimuqmc.github.io/QuantumNeuralStates.jl/dev/)
+
 Machine Learning package for representing quantum wave-function using Neural Networks.
 This package is designed to work in batched approach supporting GPU acceleration.
 
