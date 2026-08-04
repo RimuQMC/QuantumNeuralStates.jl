@@ -1,1 +1,184 @@
-# QuantumNeuralStates.jl
+# QuantumNeuralStates
+
+Machine Learning package for representing quantum wave-function using Neural Networks.
+This package is designed to work in batched approach supporting GPU acceleration.
+
+The package is designed around [Rimu.jl](https://github.com/RimuQMC/Rimu.jl).
+
+## Installation
+
+QuantumNeuralStates.jl is not yet registered. To install it, run
+
+```julia
+import Pkg; Pkg.add(url="https://github.com/RimuQMC/QuantumNeuralStates.jl")
+```
+
+## Usage Guide
+
+```julia
+using Rimu
+using QuantumNeuralStates
+```
+
+First we need to decide if we want to use GPU for Neural Networks calculations or not.
+If so, we need to also include GPU julia packages: `CUDA`, `Metal`, (`AMDGPU` - not tested).
+We also need to define `device` which would hold GPU function (default `device = identity` -
+CPU)
+
+```julia
+using Metal
+device = Metal.mtl
+```
+
+Next we set up the quantum system using `Rimu` interface. In this case 1D real Hubbard model.
+
+```
+M=10 # number of sites
+N=50 # number of particles
+addr = near_uniform(BoseFS{N,M})
+H = HubbardReal1D(addr; u=0.1)
+```
+
+Now we define the Neural Network itself. We define fully-connected network with 3 hidden layers 
+with 100 neurons each, using `tanh` as activation function in all layers (except output). The
+output is one number which would represent the logarithm of the wave-function `log|ψ|` 
+(for now this is only configuration working).
+
+```julia
+batch = 1024
+model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh; batch=batch, device=device)
+```
+
+So far we only defined pure neural network. We need to define physical `ansatz` that would 
+represent the wave-function.
+
+```julia
+ansatz  = NeuralAnsatz(H, model, batch)
+```
+
+Lastly, we need to define training parameters. This is done inside `TrainingPhase` struct,, which
+can be stacked. We can also define keyword arguments about details if we want to save/load
+result of training.
+
+```julia
+phases = [
+    TrainingPhase(
+        mode       = :energy,
+        optimiser  = :adam,
+        vmc_sampler= :ctmc,
+        stop       = StopBuffer(var_thr=1000),
+        η          = 0.001f0,
+        skip       = [(1, 100), (300, 200)],
+        block_size = 10, 
+        block_min  = 6, 
+        patience   = 3,
+        max_epochs = 500,
+    ),
+    TrainingPhase(
+        mode       = :energy,
+        optimiser  = :minSR,
+        vmc_sampler= :metropolis,
+        stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
+        η          = 0.001f0,
+        λ          = 0.001f0,
+        skip       = [(1, 300)],
+        η_decrease = [(1, 0.1)],
+        block_size = 10, 
+        block_min  = 6, 
+        patience   = 3,
+        max_epochs = 1000,
+    ),
+]
+
+SAVEFILE     = "./weights/example.txt"
+SAVE_WEIGHTS = true
+LOADFILE     = ""
+LOAD_WEIGHTS = false
+```
+
+Finally we can run the training loop.
+
+```julia
+E, E_err, var, new_addrs = run_training_loop(H, ansatz, addr, phases; 
+                                            savefile=SAVEFILE, loadfile=LOADFILE, 
+                                            save=SAVE_WEIGHTS, load=LOAD_WEIGHTS)
+
+```
+
+The return values are holding the full training history in blocks. 
+
+Example of training output is showed below. Both example code `example.jl` and output
+`example.log` can be find inside the package.
+
+```
+[ Info: Metal (mtl) was loaded for GPU computations
+[ Info: Hilbert space dimension: 1.257e+10
+####################################################################################################
+  Training with: 2 phase(s)
+####################################################################################################
+
+  Phase 1/2  |  mode=energy,  optimiser=Adam,  vmc_sampler=ctmc,  max_epochs=500
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Block  E_block            E_err        Var_block    |ΔE|        |Δvar|      Accept    η (LR)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+1      -47.8532359710     2.83e+00     5.40e+02     0.00e+00    0.00e+00    1.0000    1.00e-03
+2      -56.3022441331     2.23e-01     3.55e+02     8.45e+00    1.85e+02    1.0000    1.00e-03
+3      -53.3723850992     1.72e-01     4.02e+02     2.93e+00    4.62e+01    1.0000    1.00e-03
+4      -55.5547171563     4.62e-01     3.90e+02     2.18e+00    1.18e+01    1.0000    1.00e-03
+5      -60.5617568794     3.03e-01     3.13e+02     5.01e+00    7.68e+01    1.0000    1.00e-03
+6      -62.7611369401     1.75e-01     2.59e+02     2.20e+00    5.44e+01    1.0000    1.00e-03
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Phase 1 converged after 60 epochs  |  E = -62.7611369401  |  var = 258.618232
+
+  Phase 2/2  |  mode=energy,  optimiser=minSR,  vmc_sampler=metropolis,  max_epochs=1000
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Block  E_block            E_err        Var_block    |ΔE|        |Δvar|      Accept    η (LR)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+1      -63.1419522000     2.50e-01     2.60e+02     0.00e+00    0.00e+00    1.0000    1.00e-03
+2      -63.7508881055     1.92e-01     2.46e+02     6.09e-01    1.43e+01    0.9961    1.00e-03
+3      -66.8734857670     5.90e-01     2.02e+02     3.12e+00    4.36e+01    0.9658    1.00e-03
+4      -71.9501744518     4.42e-01     1.39e+02     5.08e+00    6.31e+01    0.9297    1.00e-03
+5      -75.9178837119     3.33e-01     9.65e+01     3.97e+00    4.27e+01    0.9102    1.00e-03
+6      -78.2655909771     1.76e-01     7.05e+01     2.35e+00    2.60e+01    0.8916    1.00e-03
+7      -80.1230654082     1.38e-01     5.42e+01     1.86e+00    1.63e+01    0.8799    1.00e-03
+8      -81.5080602499     1.56e-01     4.46e+01     1.38e+00    9.65e+00    0.8691    1.00e-03
+9      -82.5799737426     9.93e-02     3.55e+01     1.07e+00    9.09e+00    0.8604    1.00e-03
+10     -83.4345847685     1.25e-01     2.88e+01     8.55e-01    6.69e+00    0.8447    1.00e-03
+11     -84.2566891700     4.77e-02     2.32e+01     8.22e-01    5.66e+00    0.8320    1.00e-03
+12     -84.8966058788     5.23e-02     1.80e+01     6.40e-01    5.19e+00    0.8262    1.00e-03
+13     -85.3472813466     6.19e-02     1.52e+01     4.51e-01    2.79e+00    0.8164    1.00e-03
+14     -85.8354602466     6.35e-02     1.15e+01     4.88e-01    3.71e+00    0.8203    1.00e-03
+15     -86.1609696466     3.01e-02     9.21e+00     3.26e-01    2.26e+00    0.8066    1.00e-03
+16     -86.4875634925     3.46e-02     7.54e+00     3.27e-01    1.67e+00    0.7959    1.00e-03
+17     -86.6725934233     3.27e-02     5.98e+00     1.85e-01    1.56e+00    0.7637    1.00e-03
+18     -86.8432985543     3.03e-02     5.39e+00     1.71e-01    5.88e-01    0.7891    1.00e-03
+19     -87.0150479434     1.72e-02     4.14e+00     1.72e-01    1.25e+00    0.7715    1.00e-03
+20     -87.1162615419     1.77e-02     3.50e+00     1.01e-01    6.36e-01    0.7832    1.00e-03
+21     -87.1985440490     1.75e-02     3.20e+00     8.23e-02    3.04e-01    0.7754    1.00e-03
+22     -87.3394108981     1.63e-02     2.50e+00     1.41e-01    6.94e-01    0.7754    1.00e-03
+23     -87.3677397087     1.07e-02     2.24e+00     2.83e-02    2.63e-01    0.7764    1.00e-03
+24     -87.4264866042     1.56e-02     2.03e+00     5.87e-02    2.16e-01    0.7646    1.00e-03
+25     -87.4849963348     1.22e-02     1.72e+00     5.85e-02    3.08e-01    0.7646    1.00e-03
+26     -87.5448764411     1.05e-02     1.68e+00     5.99e-02    3.45e-02    0.7676    1.00e-03
+27     -87.5742370170     8.16e-03     1.49e+00     2.94e-02    1.98e-01    0.7725    1.00e-03
+28     -87.6262748045     1.59e-02     1.23e+00     5.20e-02    2.53e-01    0.7637    1.00e-03
+29     -87.6587788828     1.54e-02     1.27e+00     3.25e-02    3.45e-02    0.7725    1.00e-03
+30     -87.6796887071     1.18e-02     1.32e+00     2.09e-02    4.99e-02    0.7715    1.00e-04
+31     -87.6860161456     1.42e-02     1.13e+00     6.33e-03    1.86e-01    0.7822    1.00e-04
+32     -87.6600091269     8.05e-03     1.12e+00     2.60e-02    8.08e-03    0.7520    1.00e-04
+33     -87.6809517815     9.37e-03     1.08e+00     2.09e-02    4.78e-02    0.7734    1.00e-04
+34     -87.6974189083     9.31e-03     1.07e+00     1.65e-02    6.55e-03    0.7656    1.00e-04
+35     -87.6953858379     1.02e-02     1.18e+00     2.03e-03    1.07e-01    0.7666    1.00e-04
+36     -87.7091876538     1.07e-02     1.01e+00     1.38e-02    1.70e-01    0.7812    1.00e-04
+37     -87.7241691339     7.18e-03     1.02e+00     1.50e-02    1.18e-02    0.7627    1.00e-04
+38     -87.6981728373     1.03e-02     1.16e+00     2.60e-02    1.44e-01    0.7705    1.00e-04
+39     -87.7056189033     1.00e-02     1.08e+00     7.45e-03    7.94e-02    0.7852    1.00e-04
+40     -87.7031125338     5.49e-03     1.05e+00     2.51e-03    2.90e-02    0.7666    1.00e-04
+41     -87.7081623556     1.31e-02     1.01e+00     5.05e-03    4.78e-02    0.7578    1.00e-04
+42     -87.7428437546     9.27e-03     9.34e-01     3.47e-02    7.11e-02    0.7568    1.00e-04
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Phase 2 converged after 420 epochs  |  E = -87.7428437546  |  var = 0.934211
+[ Info: Saving (21401 weights, 1024 addresses) to ./weights/example.txt
+
+```
+
