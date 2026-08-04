@@ -1,14 +1,9 @@
-# using LinearAlgebra
 using Rimu
 using QuantumNeuralStates
-# using Printf
 
 # Choose what GPU you are using
 using Metal     # device = mtl
 # using CUDA      # device = cu
-
-# include("./QNS.jl")
-# using .QNS
 
 # -------------------------------------------------------------------
 # Choosing what GPU wull be running (if none -> CPU run is chosen)

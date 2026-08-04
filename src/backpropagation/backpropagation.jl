@@ -26,7 +26,7 @@ Two storages live side by side:
 * `J_layers`: a tuple of `(J_W, J_b)` per layer, with `J_W` and `J_b` as 
     contiguous arrays of shape `(out, in, batch)` and `(out, batch)`. 
     [`back!`](@ref) writes here.
-* `J`: the flatten `(p, batch)` Jacobian. Filled by [`flatten_jacobian!`](@ref) 
+* `J`: the flatten `(p, batch)` Jacobian. Filled by [`flatten_jacobian!`] 
     after the reverse pass. This is the array consumed downstream by optimisers.
 
 # Arguments
@@ -36,11 +36,11 @@ Two storages live side by side:
 
 # Futher Arguments:
 
-* `ranges`: tuple of [`LayerRange`](@ref).
+* `ranges`: tuple of [`LayerRange`].
 * `δ_init`: output-side seed gradient (vector -> row of ones).
 * `θ`: flatten parameter vector mirroring the chain's current weights.
 * `zipped`: precomputed `(layer, buf, (J_W, J_b), x)` tuples, one per
-  layer, fed into the recursive [`_backprop!`](@ref).
+  layer, fed into the recursive [`_backprop!`].
 * `ln_zipped`: See [`LayerNorm`](@ref). J_γ/J_β live inside.
 
 ## Notes

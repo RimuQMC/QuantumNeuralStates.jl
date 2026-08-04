@@ -37,7 +37,7 @@ Apply basic gradient descent step for parameter optimisation.
 \\Delta\\theta = J \\dot \\tilde{g}
 ```
 `J` is pre-sample jacobian (see [`JacobianBuffer`](@ref)) and `g̃` are weighted loss 
-gradients (see [`apply_loss`](@ref)). 
+gradients (see [`apply_loss!`](@ref)). 
 
 # Arguments
 * `jacobian_buf`: holds all neccessary variables about jacobians and parameters.
@@ -56,7 +56,7 @@ gradients (see [`apply_loss`](@ref)).
 * `burnin`: number of thermalisation steps in VMC before update (default `100`). 
         See [`vmc_energy`](@ref).
 * `mode`: symbol specifying what loss function is applied (default `:energy`). 
-        See [`apply_loss`](@ref).
+        See [`apply_loss!`](@ref).
 * `λ`: no use here (default `0.001f0`).
 * `η`: learning rate for parameter update (default `0.001f0`).
 """

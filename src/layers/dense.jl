@@ -4,8 +4,12 @@
 
 A fully-connected (dense) neural network layer, computing:
 
-    a = W * x + b
-    z = act_func(a)
+```math
+\\begin{aligned}
+a &= W x + b \\\\
+z &= \\text{act\\_func}(a)
+\\end{aligned}
+```
 
 Allocation-free at runtime — all intermediate results are stored in pre-allocated buffers.
 

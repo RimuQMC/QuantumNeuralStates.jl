@@ -56,7 +56,7 @@ See [`ctmc_sample!`](@ref) and [`metropolis_sample!`](@ref).
 * Thermalisation: the Markov chain is burned in for `burnin` steps before any
   statistics are collected, ensuring the chain has reached the stationary distribution.
 * Weights: under Metropolis sampling all weights are uniform; under CTMC sampling
-  weights are computed, see [get_ctmc_weights!](@ref).
+  weights are computed, see [`get_ctmc_weights!`](@ref).
 
 # Example
 ```julia

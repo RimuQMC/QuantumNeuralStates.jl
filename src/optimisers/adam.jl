@@ -86,7 +86,7 @@ Apply Adam moment updates and performs gradient descent step for parameter optim
 * `burnin`: number of thermalisation steps in VMC before update (default `100`). 
         See [`vmc_energy`](@ref).
 * `mode`: symbol specifying what loss function is applied (default `:energy`). 
-        See [`apply_loss`](@ref).
+        See [`apply_loss!`](@ref).
 * `λ`: no use here (default `0.001f0`).
 * `η`: learning rate for parameter update (default `0.001f0`).
 """

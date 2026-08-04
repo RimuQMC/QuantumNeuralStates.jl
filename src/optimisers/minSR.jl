@@ -110,7 +110,7 @@ a matrix-free [`cg_solve!`](@ref).
 ```
 
 The `J̃` is weighted centered per-sample jacobian and `g̃` represents weighted loss
-function gradient, see [`apply_loss`](@ref).
+function gradient, see [`apply_loss!`](@ref).
 
 # Arguments
 * `E_mean`: mean of local energies `⟨E⟩`. (Float64)
@@ -176,7 +176,7 @@ end
             -> E_mean, variance, last_addr, acceptance
 
 Function that applies `minSR` optimiser to update `ansatz.model` parameters. See
-also [compute_minSR_cg!](@ref).
+also [`compute_minSR_cg!`](@ref).
 
 # Variables
 
@@ -197,7 +197,7 @@ also [compute_minSR_cg!](@ref).
 * `burnin`: number of thermalisation steps in VMC before update (default `100`). 
         See [`vmc_energy`](@ref).
 * `mode`: symbol specifying what loss function is applied (default `:energy`). 
-        See [`apply_loss`](@ref).
+        See [`apply_loss!`](@ref).
 * `λ`: Tikhonov regularisation for `minSR` step (default `0.001f0`).
 * `η`: learning rate for parameter update (default `0.001f0`).
 

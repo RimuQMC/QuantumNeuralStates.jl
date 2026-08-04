@@ -134,7 +134,7 @@ with different parameters.
         chosen, the condition is checked in last `patience` number of blocks
         (default `3`).
 * `max_epochs`: maximum epochs in learning loop (default `1000`). If none of
-        early-stopping condition is met this is safe-check condition. 
+        early-stopping conditions are met this is safe-check stop condition. 
 
 # Notes
 

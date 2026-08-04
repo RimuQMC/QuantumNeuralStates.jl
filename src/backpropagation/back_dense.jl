@@ -16,6 +16,20 @@ function DenseBuffer(layer::Dense)
     return DenseBuffer(δz, δ)
 end
 
+
+@inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
+    if ndims(x) == 1
+        J_W .= δz .* reshape(x, 1, :)
+        J_b .= δz
+    else
+        out_dim, in_dim = size(W)
+        batch   = size(δz, 2)
+        J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
+        J_b .= δz
+    end
+end
+
+
 """
     back!(layer::Dense, buf, J_W, J_b, δ, x) -> δ_pass
     back!(layer::Dense, buf, J_W, J_b, δ, x, ln) -> δ_pass
@@ -35,17 +49,6 @@ Returns the accumulated gradient `buf.δ` for next layer calculations layer.
 If dispatched with `ln` ([`LayerNorm`](@ref)) then the gradient accumulation
 needs to account for extra normalisation step of pre-activation output.
 """
-@inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
-    if ndims(x) == 1
-        J_W .= δz .* reshape(x, 1, :)
-        J_b .= δz
-    else
-        out_dim, in_dim = size(W)
-        batch   = size(δz, 2)
-        J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
-        J_b .= δz
-    end
-end
 function back!(layer::Dense, buf::DenseBuffer, J_W, J_b,
                δ::AbstractArray, x::AbstractArray)
     buf.δz .= δ .* layer.act_deriv.(layer.a)

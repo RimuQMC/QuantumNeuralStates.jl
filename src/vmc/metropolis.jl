@@ -10,7 +10,6 @@ using random draw weighted by hamiltonian elements - heatbath.
 heatbath inspiration:
 https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
 """
-
 function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     B = length(addrs_n) # batch 
 

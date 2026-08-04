@@ -13,7 +13,7 @@ This structure is meant to be general and user should define its own
 dispatch on [`_choose_meanfield_function`](@ref) that returns mean-field
 `func` and `params`.
 
-Mean-field is then called with function [`(mf)`](@ref). So far this 
+Mean-field is then called with function [`(mf)`]. So far this 
 happens on CPU only!
 """
 struct MeanField{F,P}
@@ -51,9 +51,8 @@ function `func` and needed parameters `params` for its evalation.
 
 # Note
 * `params` can be arbitrary type best fitted for passing necessary values.
-* When defining mean-field function read also [`(mf)`](@ref) for closer details.
+* When defining mean-field function read also [`(mf)`] for closer details.
 """
-# function _choose_meanfield_function(H::Rimu.FroehlichPolaronND{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any})
 function _choose_meanfield_function(H::Rimu.FroehlichPolaron)
     eta, f = solve_self_consistent_eta(H)
 
@@ -65,3 +64,4 @@ function _choose_meanfield_function(H::Rimu.FroehlichPolaron)
     params = (log_f_row, const_term)
     return forward_logMF_FroehlichND!, params
 end
+# function _choose_meanfield_function(H::Rimu.FroehlichPolaronND{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any})

@@ -61,7 +61,7 @@ end
 """
     save_weights(filename, θ)
 
-Save flatten weights vector "θ" to a plain-text file. See [`_write_weights`](@ref).
+Save flatten weights vector "θ" to a plain-text file. See [`_write_weights`].
 """
 function save_weights(filename::String, θ::AbstractVector)
     open(filename, "w") do io
@@ -74,7 +74,7 @@ end
     save_addrs(filename, addrs; num_width=3)
 
 Save addresses to a plain-text file. Addresses are separated by ", " on 
-a single line. See [`_write_addrs`](@ref).
+a single line. See [`_write_addrs`].
 """
 function save_addrs(filename::String, addrs::Vector; num_width::Int=3)
     open(filename, "w") do io
@@ -87,7 +87,7 @@ end
     save_input_scale(filename, ansatz)
 
 Save information about input scaling function and about input normalisations.
-See [`_write_input_scale`](@ref).
+See [`_write_input_scale`].
 """
 function save_input_scale(filename::String, ansatz)
     open(filename, "w") do io
@@ -131,6 +131,8 @@ function save_master(filename::String, θ::AbstractVector, addrs::Vector, ansatz
     input scaling function with norm of $(ansatz.max_norm)) to $filename"
 end
 
+# helper: pulls "log1p" from string "scale function: log1p"
+parse_kv(line) = strip(split(line, ":", limit=2)[2])
 
 """
     load_master(chain, filename::String) -> x
@@ -145,9 +147,6 @@ If only one column was saved, `vec(x)` is called to get a flat vector.
 * `filename`: "name_of_file.txt".
 
 """
-# helper: pulls "log1p" from string "scale function: log1p"
-parse_kv(line) = strip(split(line, ":", limit=2)[2])
-
 function load_master(ansatz, filename::String)
     lines = readlines(filename)
     # find the data lines by looking for the section headers

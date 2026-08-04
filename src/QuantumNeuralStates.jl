@@ -18,7 +18,7 @@ const PACKAGE_NAME = "QuantumNeuralStates"
 
 Machine Learning package designed to work with Rimu ([online](https://RimuQMC.github.io/Rimu.jl/)).
 """
-QNS
+# QuantumNeuralStates
 
 include("./activations.jl")
 include("./layers/layernorm.jl")
@@ -46,13 +46,13 @@ include("./truncation/center_fill_nD.jl")
 
 include("./ansatz.jl")
 export NeuralAnsatz, prepare_input!, compute_logψ, multi_compute_logψ
-include("./qmc/qmc_helpers.jl")
+include("./vmc/vmc_helpers.jl")
 export VMCBuffer
-include("./qmc/metropolis.jl")
+include("./vmc/metropolis.jl")
 export metropolis_sample!, metropolis_heatbath_sample!
-include("./qmc/ctmc.jl")
+include("./vmc/ctmc.jl")
 export ctmc_sample!, ctmc_heatbath_sample!
-include("./qmc/qmc.jl")
+include("./vmc/vmc.jl")
 export vmc_sample!, vmc_energy
 include("./optimisers/gradients.jl")
 export apply_loss!

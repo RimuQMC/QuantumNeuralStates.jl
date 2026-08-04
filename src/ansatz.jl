@@ -382,11 +382,11 @@ First stage:
     It applies `*1/ψ_source` factor after spawning from `source::PDVec`. 
     Because all input configurations are known in `source` already, but
     spawning `targets` are still unknown.
-    This is done in [`deposit!`](@ref) function. 
+    This is done in [`deposit!`] function. 
 Second stage:
     After spawning (and summing all same `target` configurations) we can
     apply `*ψ_target` factor as all `targets` are already known here.
-    This is done in [`_ansatz_modify_new!`](@ref) function.
+    This is done in [`_ansatz_modify_new!`] function.
 """
 
 # Modified Hamiltonian is not modified here but I need this definition for

@@ -5,7 +5,7 @@
 In-place matrix-vector product for the [`cg_solve!`](@ref) linear system solver.
 
 ```math
-    Ap = (\\tilde{J}^T \\dot \\tilde{J} + \\lambda \\mathbf{I}) \\dot p
+Ap = (\\tilde{J}^T \\dot \\tilde{J} + \\lambda \\mathbf{I}) \\dot p
 ```
 
 # Arguments
@@ -29,7 +29,7 @@ Conjugate Gradient solver for the minSR linear system. Written for batched
 approach and GPU friendly calculations.
 
 ```math
-(\\tilde{J}^T \\dot \\tilde{J} + \\lambda \\mathbf{I}) \\dot x = b
+(\\tilde{J}^T \\tilde{J} + \\lambda \\mathbf{I}) x = b
 ```
 
 where `b` is passed in `r` (overwritten during solve) and the initial guess is `x = 0`.

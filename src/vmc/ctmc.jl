@@ -117,13 +117,7 @@ end
 VMC sampler using Continous Time Monte Carlo algorithm (CTMC). New addresses are proposed
 from offdiagonal. This algorithm always accept some new proposed state and
 introduce so called `residence time`, which represent `weights` of how long the walker 
-effectively stays on a configuration before jumping. 
-
-```math
-w_n = \\frac{|\\psi(n)|}{\\sum_m |\\psi(m)|}
-```
-
-Also see [`get_ctmc_weights!`](@ref).
+effectively stays on a configuration before jumping. Also see [`get_ctmc_weights!`](@ref).
 
 # Variables
 
