@@ -2,13 +2,15 @@
 # using Rimu
 
 """
-    NeuralAnsatz(hamiltonian, model, batch_size; kwargs...) <: Gutzwiller.AbstractAnsatz             
+    NeuralAnsatz(ansatz_type, hamiltonian, model, batch_size; kwargs...) <: Gutzwiller.AbstractAnsatz             
 
 A neural network-based variational ansatz for use with Rimu's FCIQMC.
 Wraps a [`Chain`](@ref) neural network model and manages the buffers needed for batched evaluation
 and importance sampling.
 
 # Arguments
+* `ansatz_type`: it is [`AnsatzType`](@ref) which determine how the wave-function ansatz, using neural
+        network outputs, should looks like.
 * `hamiltonian`: hamiltonian defined in `Rimu`.
 * `model`: a `Chain` neural network model. 
 * `batch_size`: number of configurations evaluated in a single forward

@@ -2,8 +2,8 @@
 """
     AnsatzType
 
-Abstract type for specifying what wave-function ansatz should [`NeuralAnsatz`](@ref) and
-neural network represent. The representation should reflect how many outputs neural 
+Abstract type for specifying how the wave-function [`NeuralAnsatz`](@ref) is defined with respect to
+neural network representation. The representation should reflect how many outputs neural 
 network predicts.
 
 See also [`LogPsi`](@ref) and [`LogPsiSignTanh`](@ref).
