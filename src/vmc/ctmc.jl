@@ -55,17 +55,17 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
           push!(flat_addrs_all, addr_m)
           push!(flat_Hmn_all,   H_mn)
           push!(walker_idx_all, b)
-          push!(total_buf, H_mn)
         end
         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
     end
 
     # --- STEP 2: NN forward on proposals ---------------------------------------------
-    multi_compute_logψ(ansatz, flat_addrs_all, flat_vals_m)
-
-    total_buf .= total_buf .* exp.(clamp.(flat_vals_m, -80f0, 80f0))
+    multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------
+    resize!(total_buf, length(flat_addrs_all))
+    total_buf .= psi_from_output(ansatz, flat_vals_m) .* flat_Hmn_all
+
     for b in 1:B
         _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
     end
@@ -171,7 +171,6 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
           push!(flat_addrs_all, addr_m)
           push!(flat_Hmn_all,   H_mn)
           push!(walker_idx_all, b)
-          push!(total_buf, 1.0)
         end
         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
     end
@@ -179,9 +178,10 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # --- STEP 2: NN forward on proposals ---------------------------------------------
     multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
-    total_buf .= exp.(clamp.(flat_vals_m, -80f0, 80f0))
-
     # --- STEP 3: Propose new addresses ---------------------------------------------
+    resize!(total_buf, length(flat_addrs_all))
+    total_buf .= psi_from_output(ansatz, flat_vals_m)
+
     for b in 1:B
         _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
     end

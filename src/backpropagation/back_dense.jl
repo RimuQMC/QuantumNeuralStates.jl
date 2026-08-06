@@ -30,6 +30,17 @@ end
 end
 
 
+function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,Nothing,LN}, a) where {T,M,V,F,G,B,LN}
+    δz .= layer.act_deriv.(a)
+    return δz
+end
+function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,R,LN}, a) where {T,M,V,F,G,B,R<:Tuple,LN}
+    map(layer.act_deriv, layer.act_ranges) do f, r
+        @views δz[r,:] .= f.(a[r,:])
+    end
+    return δz
+end
+
 """
     back!(layer::Dense, buf, J_W, J_b, δ, x) -> δ_pass
     back!(layer::Dense, buf, J_W, J_b, δ, x, ln) -> δ_pass
@@ -51,14 +62,16 @@ needs to account for extra normalisation step of pre-activation output.
 """
 function back!(layer::Dense, buf::DenseBuffer, J_W, J_b,
                δ::AbstractArray, x::AbstractArray)
-    buf.δz .= δ .* layer.act_deriv.(layer.a)
+    apply_act_deriv!(buf.δz, layer, layer.a)
+    buf.δz .*= δ
     _fill_JW_Jb!(J_W, J_b, layer.W, buf.δz, x)
     mul!(buf.δ, layer.W', buf.δz, 1f0, 0f0)
     return buf.δ
 end
 function back!(layer::Dense, buf::DenseBuffer, J_W, J_b,
                δ::AbstractArray, x::AbstractArray, ln::LayerNorm)
-    buf.δz .= δ .* layer.act_deriv.(layer.a)
+    apply_act_deriv!(buf.δz, layer, layer.a)
+    buf.δz .*= δ
     ln.J_γ .= buf.δz .* ln.x̂          
     ln.J_β .= buf.δz                    
     ln_backward!(ln, buf.δz)            

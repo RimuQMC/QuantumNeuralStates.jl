@@ -126,12 +126,6 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 log_markov_chain(markovfile, addrs_n; start=false)
             end
 
-            # --- η decrease schedule --------------------------------
-            if η_dec_idx > 0 && variance < phase.η_decrease[η_dec_idx][1]
-                η *= Float32(phase.η_decrease[η_dec_idx][2])
-                η_dec_idx = η_dec_idx < length(phase.η_decrease) ? η_dec_idx + 1 : 0
-            end
-
             # --- block analysis -------------------------------------
             if epoch % phase.block_size == 0
                 if tmp_neuron_statistics !== false
@@ -146,6 +140,12 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 push!(E_err_hist, E_err_b)
                 push!(var_hist,   var_b)
                 block = BlockStats()
+
+                # --- η decrease schedule --------------------------------
+                if η_dec_idx > 0 && var_b < phase.η_decrease[η_dec_idx][1]
+                    η *= Float32(phase.η_decrease[η_dec_idx][2])
+                    η_dec_idx = η_dec_idx < length(phase.η_decrease) ? η_dec_idx + 1 : 0
+                end
 
                 diff_E   = length(E_hist)   > 1 ? abs(E_hist[end]   - E_hist[end-1])   : NaN
                 diff_var = length(var_hist)  > 1 ? abs(var_hist[end] - var_hist[end-1]) : NaN

@@ -95,9 +95,9 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
-        multi_compute_logψ(ansatz, flat_addrs_all, flat_vals_m)
+        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
-        total_buf .= total_buf .* exp.(clamp.(flat_vals_m, -80f0, 80f0))
+        total_buf .*= psi_from_output(ansatz, flat_vals_m)
     end
 
 
@@ -224,9 +224,9 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
-        multi_compute_logψ(ansatz, flat_addrs_all, flat_vals_m)
+        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
-        total_buf .= exp.(clamp.(flat_vals_m, -80f0, 80f0))
+        total_buf .= psi_from_output(ansatz, flat_vals_m)
     end
 
     # --- STEP 6: E_loc calculations --------------------------------------------------
