@@ -38,6 +38,7 @@ center_order
 _dense_alloc
 _init_std
 _lookup_deriv
+elocs_clamping!
 ```
 
 ## Index
