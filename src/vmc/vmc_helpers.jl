@@ -22,7 +22,7 @@ This structure holds all necessary intermediate variables for VMC steps. If
 mutable struct VMCBuffer{A, VA <: AbstractVector{A}}
     addrs_m::VA                         # (B,)      - spawned and chosen addresses
     flat_addrs_m::VA                    # (total,)  - all spawned addresses
-    flat_vals_m::Vector{Float64}        # (total,)  - outputs NN(flat_addrs_m)
+    flat_vals_m::Vector{Float64}        # (total*out_dim,) - outputs NN(flat_addrs_m)
     flat_offdiag_ham::Vector{Float64}   # (total,)  - H_mn values for all spawned addresses
     diag_ham::Vector{Float64}           # (B,)      - H_nn values
     start::Bool                         # when to start E_loc calculations (after termalisation)
@@ -98,46 +98,46 @@ function _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
     addrs_m[b] = addrs_m_all[range_start + k_prop - 1]
 end
 
-"""
-    calculate_local_energy!(ansatz, vmc_buf)
-
-This function calculates local energies in VMC. 
-
-```math
-E_{loc}(n) = H_{nn} + \\sum_m H_{nm} * \\frac{\\psi(m)}{\\psi(n)}
-```
-
-It utilise [`VMCBuffer`](@ref) for all necessary intermediate variables for allocation-free 
-calculations. The wave-function ratio is clamped to `Float32` precision of `exp()`.
-
-## Note
-The local energies are clamped at the end to counter node-like instabilities. Those can occur
-not only in nodes themselves but also in not pre-trained neural network which can looks like a 
-node. 
-"""
-function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer)
-    # Taking neccessary stuff from metropolis buffer
-    flat_vals_m = vmc_buf.flat_vals_m   # (total,)
-    diag_ham = vmc_buf.diag_ham         # (B,)
-    flat_Hmn = vmc_buf.flat_offdiag_ham # (total,)
-    walker_idx = vmc_buf.walker_idx     # (total,)
-    E_locs = vmc_buf.E_locs             # (B,)
-    vals_n_cpu = vmc_buf.vals_n_cpu     # (1, B)
-
-    # E_loc(n) = H_nn + Σ_m H_mn * ψ(m) / ψ(n)
-    vals_n_expanded  = view(view(vals_n_cpu, 1, :), walker_idx) # (total,): mapping (B,) -> (total,)
-    flat_vals_m .= clamp.(flat_vals_m .- vals_n_expanded, -80f0, 80f0)
-    flat_vals_m .= flat_Hmn .* exp.(flat_vals_m) # (total,)
-    offdiag_contribs = flat_vals_m
-    E_locs .= diag_ham .+ scatter(+, offdiag_contribs, walker_idx, dstsize=(ansatz.model.batch,))
-
-    # Carefully clip E_locs spikes for smoothening E_locs
-    med = median(E_locs)
-    spike_window = max(50, 5 * abs(med))
-    upper_bound = med + spike_window
-    lower_bound = med - spike_window
-    E_locs .= clamp.(E_locs, lower_bound, upper_bound)
-end
+# """
+#     calculate_local_energy!(ansatz, vmc_buf)
+#
+# This function calculates local energies in VMC. 
+#
+# ```math
+# E_{loc}(n) = H_{nn} + \\sum_m H_{nm} * \\frac{\\psi(m)}{\\psi(n)}
+# ```
+#
+# It utilise [`VMCBuffer`](@ref) for all necessary intermediate variables for allocation-free 
+# calculations. The wave-function ratio is clamped to `Float32` precision of `exp()`.
+#
+# ## Note
+# The local energies are clamped at the end to counter node-like instabilities. Those can occur
+# not only in nodes themselves but also in not pre-trained neural network which can looks like a 
+# node. 
+# """
+# function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer)
+#     # Taking neccessary stuff from metropolis buffer
+#     flat_vals_m = vmc_buf.flat_vals_m   # (total,)
+#     diag_ham = vmc_buf.diag_ham         # (B,)
+#     flat_Hmn = vmc_buf.flat_offdiag_ham # (total,)
+#     walker_idx = vmc_buf.walker_idx     # (total,)
+#     E_locs = vmc_buf.E_locs             # (B,)
+#     vals_n_cpu = vmc_buf.vals_n_cpu     # (1, B)
+#
+#     # E_loc(n) = H_nn + Σ_m H_mn * ψ(m) / ψ(n)
+#     vals_n_expanded  = view(view(vals_n_cpu, 1, :), walker_idx) # (total,): mapping (B,) -> (total,)
+#     flat_vals_m .= clamp.(flat_vals_m .- vals_n_expanded, -80f0, 80f0)
+#     flat_vals_m .= flat_Hmn .* exp.(flat_vals_m) # (total,)
+#     offdiag_contribs = flat_vals_m
+#     E_locs .= diag_ham .+ scatter(+, offdiag_contribs, walker_idx, dstsize=(ansatz.model.batch,))
+#
+#     # Carefully clip E_locs spikes for smoothening E_locs
+#     med = median(E_locs)
+#     spike_window = max(50, 5 * abs(med))
+#     upper_bound = med + spike_window
+#     lower_bound = med - spike_window
+#     E_locs .= clamp.(E_locs, lower_bound, upper_bound)
+# end
 
 """
     get_ctmc_weights!(distro, offsets, vals_n_cpu, batch) -> raw_norm

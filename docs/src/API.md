@@ -35,6 +35,9 @@ _write_layernorm_flag
 change_truncation!
 n_params
 center_order
+_dense_alloc
+_init_std
+_lookup_deriv
 ```
 
 ## Index

@@ -13,6 +13,7 @@ Chain
 prepare_chain_input!
 Dense
 DenseBuffer
+apply_act!
 forward
 LayerNorm
 ln_forward!
