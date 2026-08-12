@@ -33,14 +33,19 @@ and importance sampling.
                 [`jacobian_statistics`](@ref).
 
 # Example
-
-```
-julia> ansatz = NeuralAnsatz(H, model, 1024; input_scale_func=identity, max_norm=1, mean_field=false, 
-                       neuron_statistics="./neuron.txt", jacobian_statistics="./jacob.txt", 
-                       multiforward_buffer=batch*30)
+```julia
+julia> M = 10
+julia> N = 10
+julia> batch = 1024
+julia> model = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch)
+julia> addr = near_uniform(BoseFS{N,M})
+julia> H = HubbardReal1D(addr; u=0.1)
+julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 ```
 
 ## Fields
+* `ansatz_type`: it is [`AnsatzType`](@ref) which determine how the wave-function ansatz, using neural
+        network outputs, should looks like.
 * `hamiltonian`: hamiltonian defined in `Rimu`.
 * `model`: a neural network type of `Chain` used to evaluate the ansatz. 
 * `x_cpu_buffer`: pre-allocated `Float32` buffer for batched network input.
@@ -116,15 +121,13 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
                     neuron_statistics::Union{Bool,String}=false, jacobian_statistics::Union{Bool,String}=false
     )
     AT=typeof(ansatz_type)
+    # safe check of ansatz_type and number of model outputs
+    @assert (ansatz_type.num_outputs == size(last(model.layers).z, 1)) "" * 
+            "Number of outputs in model (neural network) does not correspond with ansatz_type!"
+
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
-    if batch_size == 1
-        x_cpu_buffer = zeros(Float32, dim)
-        # x_cpu_buffer = Vector{Float32}(undef, dim)
-    else
-        x_cpu_buffer = zeros(Float32, dim, batch_size)
-        # x_cpu_buffer = Matrix{Float32}(undef, dim, batch_size)
-    end
+    x_cpu_buffer = zeros(Float32, dim, batch_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
 
     A = typeof(addr)
@@ -268,8 +271,8 @@ If dispatched with `multi_forward_buffer` it allows for computation in
 arbitrary batch size. See [`MultiForwardBuffer`](@ref).
 """
 function compute_mflogψ!(na::NeuralAnsatz, addr, z)
-        x = prepare_input_occ!(na, addr, na.x_cpu_buffer)
-        logψ = na.meanfield(x, z)
+    x = prepare_input_occ!(na, addr, na.x_cpu_buffer)
+    logψ = na.meanfield(x, z)
     return nothing
 end
 function compute_mflogψ!(na::NeuralAnsatz, addr, z, multi_forward_buffer)
@@ -301,7 +304,7 @@ function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray,
     if ansatz.multi_forward_buffer !== nothing
         batch = ansatz.multi_forward_buffer.buffer_size
     else
-        batch = size(ansatz.x_cpu_buffer, 2)
+        batch = ansatz.model.batch
     end
     total = length(flat_addrs_m)
     n_chunks = cld(total, batch)

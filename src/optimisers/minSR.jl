@@ -56,13 +56,10 @@ It allows allocation-free, batched and GPU friendly evaluation of `minSR`.
     smoothening. By default `false`. See also [`MomentumBuffer`](@ref).
 * `β`: also used with [`MomentumBuffer`](@ref).
 """
-mutable struct minSRBuffer{T, D, M <: AbstractMatrix{T}, V <: AbstractVector{T},
-                             M64cpu <: AbstractMatrix{D}, X}
+mutable struct minSRBuffer{T,V<:AbstractVector{T},X}
     O_mean::V
     g::V
-    K::M
     Δθ::V
-    K_cpu::M64cpu
     vel::Bool
     moment::X
     weights::V
@@ -71,7 +68,6 @@ mutable struct minSRBuffer{T, D, M <: AbstractMatrix{T}, V <: AbstractVector{T},
 end
 function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
     T = Float32
-    D = Float64
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
     O_mean      = similar(l.b, p)
@@ -79,8 +75,6 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
     w           = similar(l.b, N)
     p_cg        = similar(l.b, N)
     Ap          = similar(l.b, N)
-    K           = fill!(similar(l.W, N, N), zero(T))
-    K_cpu       = Matrix{D}(undef, N, N)
     Δθ          = fill!(similar(l.b, p), zero(T))
     if !velocity
         vel     = false
@@ -90,11 +84,9 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
         moment  = MomentumBuffer(p, ansatz; β=β)
     end
 
-    M       = typeof(K)
     V       = typeof(O_mean)
-    M64cpu  = typeof(K_cpu)
     X       = typeof(moment)
-    return minSRBuffer{T, D, M, V, M64cpu,X}(O_mean, g, K, Δθ, K_cpu, vel, moment, w, p_cg, Ap)
+    return minSRBuffer{T,V,X}(O_mean, g, Δθ, vel, moment, w, p_cg, Ap)
 end
 
 

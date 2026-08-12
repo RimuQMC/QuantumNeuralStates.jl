@@ -47,8 +47,9 @@ include("./truncation/center_fill_nD.jl")
 
 include("./ansatz/ansatz_type.jl")
 export AnsatzType, LogPsi, LogPsiSignTanh
+export psi_from_output
 include("./ansatz/ansatz.jl")
-export NeuralAnsatz, prepare_input!, compute_logψ, multi_compute_logψ!
+export NeuralAnsatz, prepare_input!, prepare_input_occ!, compute_logψ, multi_compute_logψ!
 include("./ansatz/rimu_importance_sampling.jl")
 
 include("./vmc/vmc_helpers.jl")

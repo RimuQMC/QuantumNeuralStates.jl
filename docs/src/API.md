@@ -21,7 +21,6 @@ _ansatz_modify_new!
 grid_dims
 _get_burnin
 build_truncation
-relu_deriv
 _write_addrs
 _backprop!
 _build_opt_buffer
@@ -38,7 +37,9 @@ center_order
 _dense_alloc
 _init_std
 _lookup_deriv
+ACT_DERIV
 elocs_clamping!
+safe_denom
 ```
 
 ## Index

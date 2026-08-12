@@ -80,7 +80,7 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
     if !vmc_buf.start
         grads_n = nothing
     else
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
     end
@@ -92,11 +92,12 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
     # --- STEP 6: E_loc calculations --------------------------------------------------
     raw_norm = nothing
     if vmc_buf.start === true
+        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
         calculate_local_energy!(ansatz, vmc_buf) # saved in E_locs
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B) # saved in vals_n_cpu
+        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
     end
     acc = 1
-    copyto!(vec_cpu, view(vals_n_cpu, 1, :))
+    # copyto!(vec_cpu, view(vals_n_cpu, 1, :))
     weights = vec_cpu 
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -196,7 +197,7 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     if !vmc_buf.start
         grads_n = nothing
     else
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
     end
@@ -208,11 +209,12 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # --- STEP 6: E_loc calculations --------------------------------------------------
     raw_norm = nothing
     if vmc_buf.start === true
+        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
         calculate_local_energy!(ansatz, vmc_buf) # saved in E_locs
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B) # saved in vals_n_cpu
+        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
     end
     acc = 1
-    copyto!(vec_cpu, view(vals_n_cpu, 1, :))
+    # copyto!(vec_cpu, view(vals_n_cpu, 1, :))
     weights = vec_cpu 
 
     # --- RETURNS ---------------------------------------------------------------------

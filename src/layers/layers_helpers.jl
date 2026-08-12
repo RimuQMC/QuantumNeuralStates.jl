@@ -11,8 +11,8 @@ the rest of activation functions.
 If layer has multiple activation functions the `Glorot` is chosen for inirialisation.
 """
 _init_std(T, in, out, act::Function) =
-    (act === relu || act === gelu) ? T(sqrt(2.0/in)) : T(sqrt(2.0/(in+out))) # init-std selection also dispatched rather than `if act === relu || act === gelu`
-_init_std(T, in, out, ::Tuple) = T(sqrt(2.0/(in+out))) # for a tuple of acts, just use Glorot (safe default) unless you want per-head logic
+    (act === relu || act === gelu) ? T(sqrt(2.0/in)) : T(sqrt(2.0/(in+out)))
+_init_std(T, in, out, ::Tuple) = T(sqrt(2.0/(in+out))) 
 
 """
     _lookup_deriv(act)
@@ -38,14 +38,33 @@ function _dense_alloc(in::Int, out::Int, act;
     W  = device(randn(T, out, in) .* std)
     b  = device(zeros(T, out))
 
-    if batch == 1
-        a = device(zeros(T, out))
-        z = device(zeros(T, out))
-    else
-        a = device(zeros(T, out, batch))
-        z = device(zeros(T, out, batch))
-    end
+    a = device(zeros(T, out, batch))
+    z = device(zeros(T, out, batch))
 
     layer_norm = Layer_Norm === false ? nothing : LayerNorm(out, batch, device)
     return T, W, b, a, z, layer_norm
 end
+
+"""
+    MultiForwardLayer
+
+This struct mimic each [`Chain`](@ref) layer output variables made for customized batch size
+forward passes. See also [`MultiForwardBuffer`](@ref).
+
+# Arguments
+
+* `a`: is buffer for pre-actiovation and post-activation variable in each Chain layer.
+* `layer_norm`: is buffer for layer normalisation struct with new batch size.
+    
+"""
+mutable struct MultiForwardLayer{A<:AbstractArray,L}
+    a::A
+    layer_norm::Union{L, Nothing}
+
+    function MultiForwardLayer(a::A, ln) where {A<:AbstractArray}
+        L = typeof(ln)
+        return new{A,L}(a, ln)
+    end
+end
+            
+

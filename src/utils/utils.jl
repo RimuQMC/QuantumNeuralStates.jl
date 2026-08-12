@@ -99,7 +99,7 @@ The number of samples collected for this analysis is `batch*batch_iter`.
 """
 function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
     vmc_buf.start = true # sanity check to allow Elocs calculations
-    batch = size(last(ansatz.model.layers).z, 2)
+    batch = ansatz.model.batch
     E_block = Vector{Rimu.StatsTools.BlockingResult{Float64}}()
 
     for i in 1:batch_iter
@@ -125,4 +125,15 @@ function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz
     )
     println(combined_result)
     return nothing
+end
+
+""" 
+    safe_denom(x, epsilon)
+
+Function that safe checks near zero values of `x`. The `epsilon` define
+how close I want to be careful around zero and return safe value.
+"""
+@inline function safe_denom(x::T, epsilon::T) where T
+    ax = abs(x)
+    return ax < epsilon ? copysign(epsilon, x) : x
 end

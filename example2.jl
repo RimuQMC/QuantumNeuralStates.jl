@@ -2,8 +2,8 @@ using Rimu
 using QuantumNeuralStates
 
 # Choose what GPU you are using
-# using Metal     # device = mtl
-using CUDA      # device = cu
+using Metal     # device = mtl
+# using CUDA      # device = cu
 
 # -------------------------------------------------------------------
 # Choosing what GPU wull be running (if none -> CPU run is chosen)

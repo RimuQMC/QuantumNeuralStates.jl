@@ -53,7 +53,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
 
     # --- shared buffers ---------------------------------------------
     buffers = map(DenseBuffer, ansatz.model.layers)
-    jac_buf = JacobianBuffer(ansatz.model, buffers)
+    jac_buf = JacobianBuffer(ansatz, buffers)
     vmc_buf = VMCBuffer(ansatz, addr)
     n_params = length(jac_buf.θ)
 

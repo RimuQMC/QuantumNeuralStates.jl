@@ -11,7 +11,7 @@ heatbath inspiration:
 https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
 """
 function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = length(addrs_n) # batch 
+    B = ansatz.model.batch # batch 
 
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m   
@@ -25,6 +25,7 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
     E_locs = vmc_buf.E_locs
     flat_vals_m = vmc_buf.flat_vals_m
     vals_n_cpu = vmc_buf.vals_n_cpu  
+    vec_cpu = vmc_buf.vec_cpu
 
     # Due to uknown size of all possible offdiagonals I push! dynamically
     empty!(flat_addrs_all)
@@ -91,12 +92,13 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
         grads_n = nothing
     else
         # jacobian using last NN forward for calculations -> vals_n 
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)    
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)    
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
         multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
+        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
         total_buf .*= psi_from_output(ansatz, flat_vals_m)
     end
 
@@ -106,7 +108,7 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
     raw_norm = nothing
     if vmc_buf.start === true
         calculate_local_energy!(ansatz, vmc_buf)
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B) # saved in vals_n_cpu
+        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
     end
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -142,7 +144,7 @@ off-diagonals spawned from address `n` is same as from address `m`.
 * `ansatz`: ansatz for wave-function evaluation. See [`NeuralAnsatz`](@ref).
 """
 function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = length(addrs_n) # batch 
+    B = ansatz.model.batch # batch 
 
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m       
@@ -156,6 +158,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     E_locs = vmc_buf.E_locs
     flat_vals_m = vmc_buf.flat_vals_m
     vals_n_cpu = vmc_buf.vals_n_cpu 
+    vec_cpu = vmc_buf.vec_cpu
 
     # Due to uknown size of all possible offdiagonals I push! dynamically
     empty!(flat_addrs_all)
@@ -220,12 +223,13 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         # no need to calculate gradient during thermalization
         grads_n = nothing
     else
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
         multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
+        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
         total_buf .= psi_from_output(ansatz, flat_vals_m)
     end
 
@@ -234,7 +238,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     raw_norm = nothing
     if vmc_buf.start === true
         calculate_local_energy!(ansatz, vmc_buf)
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B)        # saved in vals_n_cpu
+        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
     end
 
     # --- RETURNS ---------------------------------------------------------------------

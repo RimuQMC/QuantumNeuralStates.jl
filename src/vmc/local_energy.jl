@@ -52,8 +52,8 @@ function calculate_local_energy!(::LogPsiSignTanh, ansatz, vmc_buf::VMCBuffer)
 
     # E_loc(n) = H_nn + Σ_m H_mn * ψ(m) / ψ(n)
     # ψ(n) = exp(NeuralNetwork(n)[1])*tanh(NeuralNetwork(n)[2])
-    vals_n_cpu[1, :] .+= log.(abs.(vals_n_cpu[2,:])) # log(ψ) = NeuralNetwork(n)[1]*log(abs(NeuralNetwork(n)[2]))
-    vals_n_cpu[2, :] .= sign.(vals_n_cpu[2,:]) # sign(ψ) = sing(NeuralNetwork(n)[2])
+    vals_n_cpu[1, :] .+= log.(abs.(vals_n_cpu[2,:])) # log(ψ) = NeuralNetwork(n)[1]+log(abs(NeuralNetwork(n)[2]))
+    vals_n_cpu[2, :] .= sign.(vals_n_cpu[2,:]) # sign(ψ) = sing(tanh(NeuralNetwork(n)[2]))
     vals_m[1, :] .+= log.(abs.(vals_m[2,:])) 
     vals_m[2, :] .= sign.(vals_m[2,:])
 

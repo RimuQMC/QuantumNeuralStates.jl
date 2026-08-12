@@ -5,28 +5,23 @@
 Pre-allocated buffer for backpropagation and Jacobian calculations through a `Dense` layer.
 """
 struct DenseBuffer{DZ <: AbstractArray, D <: AbstractArray}
-    δz::DZ # new sending output (out,) single | (out, N) batch
-    δ ::D  # incoming previous output (in,)  single | (in,  N) batch
+    δz::DZ # new sending output (out, batch)
+    δ ::D  # incoming previous output (in,  batch)
 end
 function DenseBuffer(layer::Dense)
     out_dim, in_dim = size(layer.W)
-    batch = ndims(layer.a) == 1 ? 1 : size(layer.a, 2)
+    batch = size(layer.a, 2)
     δz = similar(layer.a)
-    δ  = batch == 1 ? similar(layer.b, in_dim) : similar(layer.W, in_dim, batch)
+    δ  = similar(layer.W, in_dim, batch)
     return DenseBuffer(δz, δ)
 end
 
 
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
-    if ndims(x) == 1
-        J_W .= δz .* reshape(x, 1, :)
-        J_b .= δz
-    else
-        out_dim, in_dim = size(W)
-        batch   = size(δz, 2)
-        J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
-        J_b .= δz
-    end
+    out_dim, in_dim = size(W)
+    batch   = size(δz, 2)
+    J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
+    J_b .= δz
 end
 
 

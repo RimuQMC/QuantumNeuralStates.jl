@@ -11,6 +11,7 @@ LogPsi
 LogPsiSignTanh
 
 psi_from_output
+init_gradient_seed
 
 NeuralAnsatz
 MeanField
