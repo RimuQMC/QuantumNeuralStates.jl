@@ -48,6 +48,9 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
         network outputs, should looks like.
 * `hamiltonian`: hamiltonian defined in `Rimu`.
 * `model`: a neural network type of `Chain` used to evaluate the ansatz. 
+* `logψ_centering`: this is mean centering over batched `model` output connected with 
+                wave-function amplitude - log|ψ| (fighting the gauge invariant for 
+                multiplication of wave-function with any number coefficient)
 * `x_cpu_buffer`: pre-allocated `Float32` buffer for batched network input.
 * `addrs_buffer`: dynamically filled buffer of addresses, used during
                 Rimu FCIQMC importance sampling.
@@ -88,6 +91,7 @@ mutable struct NeuralAnsatz{AT<:AnsatzType,A,T<:Real,H,M,X<:AbstractArray,XZ<:Ab
     ansatz_type::AT
     hamiltonian::H
     model::M
+    logψ_centering::Float32 # centers model output corresponding to ψ amplitude
     x_cpu_buffer::X
     z_cpu::XZ
 
@@ -129,6 +133,9 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     dim = size(model.x, 1)
     x_cpu_buffer = zeros(Float32, dim, batch_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
+
+    nn_output = model(x_cpu_buffer)
+    logψ_centering = maximum(nn_output)
 
     A = typeof(addr)
     T = Float64
@@ -175,9 +182,10 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     NS=typeof(neuron_statistics); JS=typeof(jacobian_statistics)
 
     return NeuralAnsatz{AT,A,T,H,M,X,XZ,XA,XR,D,F,MN,MFB,MF,TR,NS,JS}(
-                ansatz_type, hamiltonian, model, x_cpu_buffer, z_cpu, addrs_buffer, result_buffer, result_dict, 
-                first_iter, input_scale_func, max_norm, normalisation, multi_forward_buffer, meanfield, 
-                trun, neuron_statistics, jacobian_statistics)
+                ansatz_type, hamiltonian, model, logψ_centering, x_cpu_buffer, z_cpu, 
+                addrs_buffer, result_buffer, result_dict, first_iter, 
+                input_scale_func, max_norm, normalisation, multi_forward_buffer, 
+                meanfield, trun, neuron_statistics, jacobian_statistics)
 end
 
 """

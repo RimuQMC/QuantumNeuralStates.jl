@@ -10,7 +10,8 @@ AnsatzType
 LogPsi
 LogPsiSignTanh
 
-psi_from_output
+psi
+log_psi!
 init_gradient_seed
 
 NeuralAnsatz

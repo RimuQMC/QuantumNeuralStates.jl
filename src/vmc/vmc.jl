@@ -6,22 +6,22 @@ See also [`ctmc_sample!`](@ref) and [`metropolis_sample!`](@ref).
 """
 function vmc_sample!(vmc_sampler::Symbol, vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     if vmc_sampler === :metropolis
-        new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = 
+        new_addrs, E_locs, weights, grads_n, acceptance = 
             metropolis_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     elseif vmc_sampler === :metropolis_heatbath
-        new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = 
+        new_addrs, E_locs, weights, grads_n, acceptance = 
             metropolis_heatbath_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     elseif vmc_sampler === :ctmc
-        new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = 
+        new_addrs, E_locs, weights, grads_n, acceptance = 
             ctmc_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     elseif vmc_sampler === :ctmc_heatbath
-        new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = 
+        new_addrs, E_locs, weights, grads_n, acceptance = 
             ctmc_heatbath_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     else
         @error "Invalid vmc sampler! Choose from :metropolis or :ctmc. You have inserted $(vmc_sampler)"
     end
 
-    return new_addrs, E_locs, weights, grads_n, acceptance, raw_norm
+    return new_addrs, E_locs, weights, grads_n, acceptance
 end     
 
 
@@ -70,7 +70,7 @@ function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
     count = 0
     while !vmc_buf.start
         count += 1
-        new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = vmc_sample!(vmc_sampler, vmc_buf, jacobian_buf, H, addrs_n, ansatz)
+        new_addrs, E_locs, weights, grads_n, acceptance = vmc_sample!(vmc_sampler, vmc_buf, jacobian_buf, H, addrs_n, ansatz)
         addrs_n = new_addrs
         if count >= burnin
             vmc_buf.start = true
@@ -78,7 +78,7 @@ function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
     end
 
     # after termalisation I just compute vmc every call (batched)
-    new_addrs, E_locs, weights, grads_n, acceptance, raw_norm = vmc_sample!(vmc_sampler, vmc_buf, jacobian_buf, H, addrs_n, ansatz)
+    new_addrs, E_locs, weights, grads_n, acceptance = vmc_sample!(vmc_sampler, vmc_buf, jacobian_buf, H, addrs_n, ansatz)
     addrs_n = new_addrs
 
     if weights === nothing
@@ -109,5 +109,5 @@ function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
     if any(isnan, grads_n) || any(isinf, grads_n)
         error("grads_n contains NaN/Inf: extrema = $(extrema(grads_n))")
     end
-      return E_mean, variance, addrs_n, acceptance, weights, raw_norm
+      return E_mean, variance, addrs_n, acceptance, weights
 end

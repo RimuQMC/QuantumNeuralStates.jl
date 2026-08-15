@@ -36,7 +36,8 @@ using Test
     multi_compute_logψ!(ansatz, addrs, multi_output)
     @test view(multi_output, 1:3) == view(output, 1, :)
 
-    @test_nowarn psi_from_output(ansatz, multi_output)
+    @test_nowarn psi(ansatz, multi_output)
+    @test_nowarn log_psi!(ansatz, output)
 
     init_grad_seed = QuantumNeuralStates.init_gradient_seed(ansatz)
     seed_check = ones(T, 1, batch)

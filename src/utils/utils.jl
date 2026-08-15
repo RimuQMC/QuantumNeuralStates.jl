@@ -20,19 +20,24 @@ const SCALE_FUNCTIONS = Dict(
 )
 
 """
-    update!(chain, jac, θ_new)
+    update!(ansatz, jac, θ_new)
 
 Updates all parameters in `chain` given a flat parameter update vector `θ_new` of size (p,).
 
 # Arguments
 
-* `chain`: Neural Network model. See [`Chain`](@ref)
+* `ansatz`: Wave-function ansatz, [`NeuralAnsatz`](@ref). See also [`Chain`](@ref)
 * `jac`: Jacobian buffer which holds `jac.ranges` information about mapping of flatten parameter
     vector to each `chain` layer.
 * `θ_new`: flatten parameter vector with new updated weights after optimisation step.
 
 """
-function update!(chain::Chain, jac::JacobianBuffer, θ_new::AbstractVector)
+function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
+    chain = ansatz.model
+    amplitude_output = view(last(chain.layers).z, 1, :)
+    ansatz.logψ_centering = maximum(amplitude_output)
+    # println("logψ centering: ", ansatz.logψ_centering)
+
     for (layer, r) in zip(chain.layers, jac.ranges)
         layer.W .= reshape(view(θ_new, r.W), size(layer.W))
         layer.b .= view(θ_new, r.b)

@@ -28,10 +28,10 @@ Layers are allocation-free at runtime. `z_last` is useful when two forward passe
 are needed simultaneously — save the first output into `z_last` before running the second.
 
 """
-mutable struct Chain{L <: Tuple, X <: AbstractArray, U <: AbstractArray,F<:Function}
-    layers  ::L
-    x       ::X
-    z_last  ::U
+mutable struct Chain{L<:Tuple,X<:AbstractArray,U<:AbstractArray,F<:Function}
+    layers::L
+    x::X
+    z_last::U
 
     device::F
     batch::Int
@@ -48,7 +48,7 @@ function Chain(layers...; device::Function = identity, batch::Int = 1)
     z_last = similar(lout.z, out_dim, batch)
 
     L, X, U, F = typeof(layers), typeof(x), typeof(z_last), typeof(device)
-    return Chain{L, X, U, F}(layers, x, z_last, device, batch)
+    return Chain{L,X,U,F}(layers, x, z_last, device, batch)
 end
 
 """

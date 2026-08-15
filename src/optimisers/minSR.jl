@@ -92,7 +92,7 @@ end
 
 """
     compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, 
-                        minSR_buf, ansatz, mode, λ, weights, raw_norm)
+                        minSR_buf, ansatz, mode, λ, weights)
 
 Computes the minSR (Stochastic Reconfiguration) natural gradient step `Δθ` using 
 a matrix-free [`cg_solve!`](@ref).
@@ -116,10 +116,9 @@ function gradient, see [`apply_loss!`](@ref).
 * `mode`: loss function mode for gradient calculations.
 * `λ`: Tikhonov regularisation.
 * `weights`: VMC sampler weights. See [`vmc_sample!`](@ref).
-* `raw_norm`: VMC estimate of normalisation over batched sample.
 """
 function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf, 
-                        vmc_buf, minSR_buf, ansatz, mode, λ, weights, raw_norm)
+                        vmc_buf, minSR_buf, ansatz, mode, λ, weights)
 
     J = jacobian_buf.J
     O_mean = minSR_buf.O_mean
@@ -134,11 +133,11 @@ function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf,
 
     if weights === nothing
         w = Float32(sqrt(1/N))     # uniform weights from Metropolis MC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, raw_norm, mode)
+        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
     else
         weights .= sqrt.(weights)
         w = weights                # weights from CTMC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, raw_norm, mode)
+        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
         copyto!(wgpu, w)
     end
 
@@ -203,7 +202,7 @@ also [`compute_minSR_cg!`](@ref).
 function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; 
                 vmc=:metropolis, burnin=100, mode=:energy, λ=0.001f0, η = 0.001f0)
 
-    E_mean, variance, last_addr, acceptance, weights, raw_norm = 
+    E_mean, variance, last_addr, acceptance, weights = 
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf; 
                         vmc_sampler=vmc, burnin=burnin, mode=mode)
 
@@ -213,7 +212,8 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         return E_mean, variance, last_addr, acceptance
     end
 
-    compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, ansatz, mode, λ, weights, raw_norm)
+    compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, 
+                      ansatz, mode, λ, weights)
     Δθ = minSR_buf.Δθ
     θ = jacobian_buf.θ
 
@@ -233,7 +233,7 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
 
     @. θ = θ - η*Δθ  # update weights vector in jacobian_buf
 
-    update!(ansatz.model, jacobian_buf, θ)  # update weights in NN model
+    update!(ansatz, jacobian_buf, θ)  # update weights in NN model
 
     return E_mean, variance, last_addr, acceptance
 end

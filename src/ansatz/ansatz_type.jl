@@ -7,18 +7,20 @@ neural network representation. The representation should reflect how many output
 network predicts.
 
 Each defined `AnsatzType` also needs to have defined dispatched functions of 
-[`psi_from_output`](@ref) and [`init_gradient_seed`](@ref)!
+[`psi`](@ref), [`log_psi!`](@ref), and [`init_gradient_seed`](@ref)!
 
 See also [`LogPsi`](@ref) and [`LogPsiSignTanh`](@ref).
 """
 abstract type AnsatzType end
 
 """
-    psi_from_output(ansatz, flat_vals)
+    psi(ansatz, flat_vals) -> ψ
 
 Function that returns `ψ` wave-function value from [`NeuralAnsatz`](@ref). For each
-[`AnsatzType`](@ref) there needs to be defined evaluation function which is used in 
-[`vmc_sample!`](@ref).
+[`AnsatzType`](@ref) there needs to be defined this function (dispatch design).
+
+This function is used in [`ctmc_sample!`](@ref), used for distribution sum for new
+proposals and ctmc weights calculation.
 
 ## Note
 Important details is that `flat_vals` is a type of `::Vector` holding the output
@@ -26,8 +28,28 @@ values from neural network (in case of multiple outputs the result is flatten an
 needs to be properly resized for correct evaluation).
 See [`LogPsiSignTanh`](@ref) as an example of multi-output ansatz.
 """
-function psi_from_output(ansatz, flat_vals::AbstractVector)
-    return psi_from_output(ansatz.ansatz_type, ansatz, flat_vals)
+function psi(ansatz, flat_vals::AbstractVector)
+    return psi(ansatz.ansatz_type, ansatz, flat_vals)
+end
+
+"""
+    log_psi!(ansatz, vals) -> log|ψ|, sign(ψ)
+
+Function that returns `log|ψ|` amplitude of wave-function and `sign(ψ)`. For each
+[`AnsatzType`](@ref) there needs to be defined this function (dispatch design).
+This function takes `vals::AbstracArray` neural network outputs and evaluates 
+in-place return values.
+
+This function is used inside [`vmc_sample!`](@ref) and [`calculate_local_energy!`](@ref)
+for wave-function ratios calculations. It should be called only ONCE as it mutates 
+`vals` in-place.
+
+## Note
+See also definition in [`LogPsiSignTanh`](@ref) for multi-output example and in
+[`LogPsi`](@ref) for single-output example.
+"""
+function log_psi!(ansatz, vals)
+    return log_psi!(ansatz.ansatz_type, ansatz, vals)
 end
 
 """
@@ -89,8 +111,14 @@ struct LogPsi <: AnsatzType
 end
 LogPsi() = LogPsi(1)
 
-function psi_from_output(::LogPsi, ansatz, flat_vals::AbstractVector)
-    return exp.(clamp.(flat_vals, -80f0, 80f0))
+function log_psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
+    out1 = view(vals, 1, :) 
+    out1 .= out1 .- ansatz.logψ_centering
+    return out1, one(T) # log|ψ|, sign
+end
+
+function psi(::LogPsi, ansatz, flat_vals::AbstractVector)
+    return exp.(clamp.(flat_vals .- ansatz.logψ_centering, -80f0, 80f0))
 end
 
 function init_gradient_seed(::LogPsi, ansatz)
@@ -125,12 +153,21 @@ struct LogPsiSignTanh <: AnsatzType
 end
 LogPsiSignTanh() = LogPsiSignTanh(2)
 
-function psi_from_output(::LogPsiSignTanh, ansatz, flat_vals::AbstractVector)
+function log_psi!(::LogPsiSignTanh, ansatz, vals::AbstractArray)
+    out1 = view(vals, 1, :)
+    out2 = view(vals, 2, :)
+
+    out1 .= (out1 .+ log.(abs.(out2))) .- ansatz.logψ_centering
+    out2 .= sign.(out2)
+    return out1, out2 # view as: logψ, sign
+end
+
+function psi(::LogPsiSignTanh, ansatz, flat_vals::AbstractVector)
     out_dim = size(last(ansatz.model.layers).z, 1)
     vals = reshape(flat_vals, out_dim, :)
     a1 = view(vals, 1, :)
     a2 = view(vals, 2, :)
-    return exp.(clamp.(a1, -80f0, 80f0)) .* a2
+    return exp.(clamp.(a1 .- ansatz.logψ_centering, -80f0, 80f0)) .* a2
 end
 
 function init_gradient_seed(::LogPsiSignTanh, ansatz)

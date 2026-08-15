@@ -33,7 +33,7 @@ M = 10 # number of sites
 # -------------------------------------------------------------------
 # NN Model
 # -------------------------------------------------------------------
-batch  = 1
+batch  = 1024
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
 model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch, device=device, Layer_Norm=true);
 

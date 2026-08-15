@@ -99,16 +99,14 @@ function _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
 end
 
 """
-    get_ctmc_weights!(distro, offsets, psi_vals_n, batch) -> raw_norm
+    get_ctmc_weights!(distro, offsets, log_psi, batch)
 
 This function calculates CTMC weights for batched approach.
 
 ```math
 w_b = \\frac{|\\psi(n_b)|}{\\sum_m \\text{distro}(m_b)}
 ```
-where `distro` is CDF probability distribution also used in VMC [`_state_proposal!`](@ref). The 
-function returns some normalisation estimate over sampled batch `raw_norm`. It can be used as 
-normalisation approximation over sampled batch.
+where `distro` is CDF probability distribution also used in VMC [`_state_proposal!`](@ref).
 
 ```math
 ||\\psi||^2 = \\sum_s p(s) \\frac{|\\psi^2|}{p(s)} = \\sum_s p(s)*Z*\\frac{|\\psi(s)|}{R(s)} =
@@ -119,10 +117,10 @@ Z * \\mathbf{E}_{s~p} \\big[ \\frac{|\\psi(s)|}{R(s)} \\big]
 
 * `distro`: distribution same as in [`_state_proposal!`](@ref).
 * `offsets`: vector that maps offdiagonal spawns from its spawning source.
-* `psi_vals_n`: holds values of wave-function calculated using [`psi_from_output`](@ref).
+* `log_psi`: holds log amplitudes of wave-function calculated using [`log_psi!`](@ref).
 * `batch`: batch number.
 """
-function get_ctmc_weights!(distro, offsets, psi_vals_n, batch)
+function get_ctmc_weights!(distro, offsets, log_psi, batch)
     # inverse CDF algorithm
     sum_weights = 0.0
     for b in 1:batch
@@ -130,13 +128,12 @@ function get_ctmc_weights!(distro, offsets, psi_vals_n, batch)
         @inbounds for i in (offsets[b]+1):offsets[b+1]
             total_w += abs(distro[i])
         end
-        # total_w = log(total_w + 1f-35)
-        # vals_n_cpu[1, b] = exp(clamp(vals_n_cpu[1, b] - total_w, -80f0, 80f0))
-        psi_vals_n[b] = abs(psi_vals_n[b]) / total_w
-        sum_weights += psi_vals_n[b]
+        total_w = log(total_w + 1f-35)
+        log_psi[b] = exp(clamp(log_psi[b] - total_w, -80f0, 80f0))
+        sum_weights += log_psi[b]
     end
-    raw_norm = sum_weights / batch
-    psi_vals_n ./= sum_weights
+    # raw_norm = sum_weights / batch
+    log_psi ./= sum_weights
 
-    return raw_norm # if loss function cares about normalisation
+    # return raw_norm # if loss function cares about normalisation
 end

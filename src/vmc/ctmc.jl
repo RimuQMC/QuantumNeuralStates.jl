@@ -1,7 +1,7 @@
 
 """
     ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc, raw_norm
+        -> new_addrs, E_locs, weights, grads_n, acc
 
 Similar as [`ctmc_sample!`](@ref) but during proposal step, new addresses are proposed 
 using random draw weighted by hamiltonian elements - heatbath. Also CTMC weights
@@ -59,12 +59,12 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
     end
 
-    # --- STEP 2: NN forward on proposals ---------------------------------------------
+    # --- STEP 2: NN forward on offdiagonals ----------------------------------------
     multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------
     resize!(total_buf, length(flat_addrs_all))
-    total_buf .= psi_from_output(ansatz, flat_vals_m) .* flat_Hmn_all
+    total_buf .= psi(ansatz, flat_vals_m) .* flat_Hmn_all
 
     for b in 1:B
         _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
@@ -90,14 +90,13 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
     new_addrs = addrs_n # reference for addrs_n 
 
     # --- STEP 6: E_loc calculations --------------------------------------------------
-    raw_norm = nothing
     if vmc_buf.start === true
-        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
-        calculate_local_energy!(ansatz, vmc_buf) # saved in E_locs
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
+        n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign) # saved in E_locs
+        get_ctmc_weights!(total_buf, offsets_all, n_logψ, B) # saved in n_logψ
+        copyto!(vec_cpu, n_logψ)
     end
     acc = 1
-    # copyto!(vec_cpu, view(vals_n_cpu, 1, :))
     weights = vec_cpu 
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -106,14 +105,13 @@ function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansa
     # weights:   sampler weights 
     # grads_n:   (p,B) gradients            -> GPU 
     # acc:       acceptance over batch input (in %)
-    # raw_norm:  norm approximation over sampled batch
-    return new_addrs, E_locs, weights, grads_n, acc, raw_norm
+    return new_addrs, E_locs, weights, grads_n, acc
 end
 
 
 """
     ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc, raw_norm
+        -> new_addrs, E_locs, weights, grads_n, acc
 
 VMC sampler using Continous Time Monte Carlo algorithm (CTMC). New addresses are proposed
 from offdiagonal. This algorithm always accept some new proposed state and
@@ -176,12 +174,12 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
     end
 
-    # --- STEP 2: NN forward on proposals ---------------------------------------------
+    # --- STEP 2: NN forward on offdiagonals ----------------------------------------
     multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------
     resize!(total_buf, length(flat_addrs_all))
-    total_buf .= psi_from_output(ansatz, flat_vals_m)
+    total_buf .= psi(ansatz, flat_vals_m)
 
     for b in 1:B
         _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
@@ -207,14 +205,13 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     new_addrs = addrs_n # reference for addrs_n 
 
     # --- STEP 6: E_loc calculations --------------------------------------------------
-    raw_norm = nothing
     if vmc_buf.start === true
-        vec_cpu .= psi_from_output(ansatz, view(vals_n_cpu, :, B))
-        calculate_local_energy!(ansatz, vmc_buf) # saved in E_locs
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vec_cpu, B) # saved in vec_cpu
+        n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign) # saved in E_locs
+        get_ctmc_weights!(total_buf, offsets_all, n_logψ, B) # saved in n_logψ
+        copyto!(vec_cpu, n_logψ)
     end
     acc = 1
-    # copyto!(vec_cpu, view(vals_n_cpu, 1, :))
     weights = vec_cpu 
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -223,7 +220,6 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # weights:   sampler weights 
     # grads_n:   (p,B) gradients            -> GPU 
     # acc:       acceptance over batch input (in %)
-    # raw_norm:  norm approximation over sampled batch
-    return new_addrs, E_locs, weights, grads_n, acc, raw_norm
+    return new_addrs, E_locs, weights, grads_n, acc
 end
 

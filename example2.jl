@@ -50,11 +50,11 @@ phases = [
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
-        vmc_sampler= :ctmc,
+        vmc_sampler= :metropolis,
         stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
         η          = 0.001f0,
         λ          = 0.001f0,
-        skip       = [(1, 20)],
+        skip       = [(1, 10)],
         η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
         block_size = 10, 
         block_min  = 6, 
