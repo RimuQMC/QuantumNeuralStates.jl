@@ -20,22 +20,6 @@ const tmpdir = mktempdir()
 
     addrs_n = fill(addr, batch)
 
-    @testset "Save weights" begin
-        file = joinpath(tmpdir, "weights.txt")
-        θ = randn(T, 100)
-        @test_nowarn QuantumNeuralStates.save_weights(file, θ)
-        rm(file; force=true)
-    end
-    @testset "Save addrs" begin
-        file = joinpath(tmpdir, "addrs.txt")
-        @test_nowarn QuantumNeuralStates.save_addrs(file, addrs_n)
-        rm(file; force=true)
-    end
-    @testset "Save input scaling" begin
-        file = joinpath(tmpdir, "input_scale.txt")
-        @test_nowarn QuantumNeuralStates.save_input_scale(file, ansatz)
-        rm(file; force=true)
-    end
     @testset "Save/Load all at once -> master save/load" begin
         file = joinpath(tmpdir, "all.txt")
         
