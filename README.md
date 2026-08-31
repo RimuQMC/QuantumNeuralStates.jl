@@ -1,6 +1,8 @@
 # QuantumNeuralStates
 
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://rimuqmc.github.io/QuantumNeuralStates.jl/dev/)
+[![Build Status](https://github.com/RimuQMC/QuantumNeuralStates.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/RimuQMC/QuantumNeuralStates.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage Status](https://coveralls.io/repos/github/RimuQMC/QuantumNeuralStates.jl/badge.svg?branch=main)](https://coveralls.io/github/RimuQMC/QuantumNeuralStates.jl?branch=main)
 
 
 Machine Learning package for representing quantum wave-function using Neural Networks.
