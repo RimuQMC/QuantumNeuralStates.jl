@@ -136,8 +136,6 @@ with different parameters.
 * `max_epochs`: maximum epochs in learning loop (default `1000`). If none of
         early-stopping conditions are met this is safe-check stop condition. 
 
-# Notes
-
 """
 Base.@kwdef struct TrainingPhase
     mode::Union{Symbol, Tuple} = :energy

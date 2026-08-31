@@ -114,7 +114,6 @@ Z * \\mathbf{E}_{s~p} \\big[ \\frac{|\\psi(s)|}{R(s)} \\big]
 ```
 
 # Variables
-
 * `distro`: distribution same as in [`_state_proposal!`](@ref).
 * `offsets`: vector that maps offdiagonal spawns from its spawning source.
 * `log_psi`: holds log amplitudes of wave-function calculated using [`log_psi!`](@ref).

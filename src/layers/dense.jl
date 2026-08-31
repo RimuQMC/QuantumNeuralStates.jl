@@ -1,4 +1,5 @@
 # using LinearAlgebra
+
 """
     Dense(in, out, act; kwargs...)
 
@@ -14,7 +15,6 @@ z &= \\text{act\\_func}(a)
 Allocation-free at runtime — all intermediate results are stored in pre-allocated buffers.
 
 # Arguments
-
 * `in`: input dimension.
 * `out`: output dimension.
 * `act`: activation function — must be registered in `ACT_DERIV` (`activations.jl`).
@@ -103,17 +103,10 @@ its layer output for easier chaining.
 * `layer`: a `Dense` layer
 * `x`: input array, shape `(in,)` or `(in, batch)`
 
-## Notes
-Bias `b` is skipped when `act_func === identity` as last output layer of 
-Neural Network represents log(ψ) and wave-function is invariant with multiplication
-of scalar.
 """
 function forward(layer::Dense, x::AbstractArray)
     mul!(layer.a, layer.W, x, 1f0, 0f0)
     layer.a .+= layer.b
-    # if layer.act_func !== identity
-    #     layer.a .+= layer.b
-    # end
     if layer.layer_norm !== nothing
         ln_forward!(layer.layer_norm, layer.a)
     end
@@ -131,9 +124,6 @@ this case new `layerMulti` holds input and output of this pass.
 function forward(layer::Dense, x::AbstractArray, layerMulti)
     mul!(layerMulti.a, layer.W, x, 1f0, 0f0)
     layerMulti.a .+= layer.b
-    # if layer.act_func !== identity
-    #     layerMulti.a .+= layer.b
-    # end
     if layer.layer_norm !== nothing
         ln_forward!(layer.layer_norm, layerMulti.a, layerMulti.layer_norm)
     end

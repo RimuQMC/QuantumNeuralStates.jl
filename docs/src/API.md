@@ -40,6 +40,7 @@ _lookup_deriv
 ACT_DERIV
 elocs_clamping!
 safe_denom
+SCALE_FUNCTIONS
 ```
 
 ## Index

@@ -48,9 +48,9 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
         network outputs, should looks like.
 * `hamiltonian`: hamiltonian defined in `Rimu`.
 * `model`: a neural network type of `Chain` used to evaluate the ansatz. 
-* `logψ_centering`: this is mean centering over batched `model` output connected with 
+* `logψ_centering`: this is max value centering over batched `model` output connected with 
                 wave-function amplitude - log|ψ| (fighting the gauge invariant for 
-                multiplication of wave-function with any number coefficient)
+                multiplication of wave-function with arbitrary number coefficient)
 * `x_cpu_buffer`: pre-allocated `Float32` buffer for batched network input.
 * `addrs_buffer`: dynamically filled buffer of addresses, used during
                 Rimu FCIQMC importance sampling.

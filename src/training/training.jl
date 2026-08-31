@@ -31,7 +31,7 @@ the previous one converges (or hits `max_epochs`).
 """
 function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                            savefile::String = "weights.txt", loadfile::String = "weights.txt",
-                           save::Bool   = true, load::Bool = false,
+                           save::Bool = true, load::Bool = false,
                            markovfile::String = "MarkovChain.txt" , markov::Bool = false)
 
     @info "Hilbert space dimension: $(@sprintf("%.3e", dimension(H)))"

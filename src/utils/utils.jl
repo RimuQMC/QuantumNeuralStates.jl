@@ -1,16 +1,15 @@
 # using Rimu: onr
 
+# Define custom input transforms as NAMED functions
+sqrtlog1p(x) = sqrt(log1p(x))
+log1plog1p(x)  = log1p(log1p(x))
+
 """
     SCALE_FUNCTIONS
 
 This dictionary holds binding with custom input scaling functions.
 Those functions can be defined here and added to the dictionary.
 """
-# Define custom input transforms as NAMED functions
-sqrtlog1p(x) = sqrt(log1p(x))
-log1plog1p(x)  = log1p(log1p(x))
-
-# for load scaling factors
 const SCALE_FUNCTIONS = Dict(
     :identity   => identity,
     :sqrt       => sqrt,

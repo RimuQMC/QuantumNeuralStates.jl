@@ -27,7 +27,7 @@ end
 
 """
     vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf; kwargs...)
-                     vmc_sampler=:metropolis, burnin=100, mode=:energy)
+                -> E_mean, variance, addrs_n, acceptance, weights
 
 Variational Monte Carlo (VMC) energy estimator. Functioning with CTMC or Metropolis samplers.
 See [`ctmc_sample!`](@ref) and [`metropolis_sample!`](@ref).
@@ -53,14 +53,14 @@ See [`ctmc_sample!`](@ref) and [`metropolis_sample!`](@ref).
 * `weights`: per-sample importance weights (`nothing` / uniform for Metropolis, computed for CTMC).
 
 # Notes
-* Thermalisation: the Markov chain is burned in for `burnin` steps before any
+* Thermalisation: the Markov chain is thermalised for `burnin` steps before any
   statistics are collected, ensuring the chain has reached the stationary distribution.
 * Weights: under Metropolis sampling all weights are uniform; under CTMC sampling
   weights are computed, see [`get_ctmc_weights!`](@ref).
 
 # Example
 ```julia
-E, var, addrs, acc, w = vmc_energy_metro(H, ansatz, addrs_n, mbuf, jbuf; vmc_sampler=:metropolis)
+E, var, addrs, acc, w = vmc_energy(H, ansatz, addrs_n, mbuf, jbuf; vmc_sampler=:metropolis)
 ```
 """
 function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf; 

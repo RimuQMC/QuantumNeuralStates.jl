@@ -35,7 +35,6 @@ M = 10 # number of sites
 # -------------------------------------------------------------------
 batch  = 1024
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
-# model  = build_model("FCNN", [M, 100, 100, 100, 2], tanh_fast; batch=batch, device=device, Layer_Norm=false);
 act = tanh_fast
 model = Chain(Dense(M, 200, act; batch=batch, device=device, Layer_Norm=true),
               Dense(200, 200, act; batch=batch, device=device, Layer_Norm=true),
@@ -51,10 +50,10 @@ phases = [
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :metropolis,
-        stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
+        stop       = StopBuffer(var_thr=40),
         η          = 0.001f0,
         λ          = 0.001f0,
-        skip       = [(1, 10)],
+        skip       = [(1, 20)],
         η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
         block_size = 10, 
         block_min  = 6, 

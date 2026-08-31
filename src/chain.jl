@@ -8,12 +8,10 @@ A Neural Network (NN) container that chains layers into a single forward-pass mo
 design is inspired by `Flux.jl` notation (general ML julia library).
 
 # Arguments
-
 * `layers...`: represent Tuple of layers from which the NN should be chained.
                For different layer types see also: [`Dense`](@ref).
 
 # Keyword Arguments
-
 * `device`: function which determine if the NN lives and computes on CPU or GPU
 * `batch`: determine what is the batch size.
 

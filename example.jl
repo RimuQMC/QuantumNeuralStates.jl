@@ -35,7 +35,8 @@ M = 10 # number of sites
 # -------------------------------------------------------------------
 batch  = 1024
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
-model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch, device=device, Layer_Norm=true);
+model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; 
+                     batch=batch, device=device, Layer_Norm=true);
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # ALL VARIABLES
@@ -47,7 +48,7 @@ phases = [
         vmc_sampler= :metropolis,
         stop       = StopBuffer(var_thr=1000),
         η          = 0.001f0,
-        skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
+        skip       = [(1, 50), (300, 200)],  # (epoch, B) → burnin B
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
@@ -56,11 +57,11 @@ phases = [
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
-        vmc_sampler= :metropolis,
+        vmc_sampler= :ctmc,
         stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
         η          = 0.001f0,
         λ          = 0.001f0,
-        skip       = [(1, 300)],
+        skip       = [(1, 20)],
         η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
         block_size = 10, 
         block_min  = 6, 
