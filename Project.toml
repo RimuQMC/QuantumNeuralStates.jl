@@ -15,11 +15,12 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Rimu = "c53c40cc-bd84-11e9-2cf4-a9fde2b9386e"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [sources]
-Gutzwiller = {url = "https://github.com/RimuQMC/Gutzwiller.jl", rev = "master"}
+Gutzwiller = {rev = "master", url = "https://github.com/RimuQMC/Gutzwiller.jl"}
 
 [compat]
 CUDA = "6.2.1"
@@ -33,6 +34,7 @@ Plots = "1.41.0"
 Printf = "1.11.0"
 Rimu = "0.17.0"
 SpecialFunctions = "2.8.1"
+StaticArrays = "1.9.19"
 Statistics = "1.11.1"
 StatsBase = "0.34.12"
 julia = "1.11"
