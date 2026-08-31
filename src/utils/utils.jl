@@ -1,16 +1,15 @@
 # using Rimu: onr
 
+# Define custom input transforms as NAMED functions
+sqrtlog1p(x) = sqrt(log1p(x))
+log1plog1p(x)  = log1p(log1p(x))
+
 """
     SCALE_FUNCTIONS
 
 This dictionary holds binding with custom input scaling functions.
 Those functions can be defined here and added to the dictionary.
 """
-# Define custom input transforms as NAMED functions
-sqrtlog1p(x) = sqrt(log1p(x))
-log1plog1p(x)  = log1p(log1p(x))
-
-# for load scaling factors
 const SCALE_FUNCTIONS = Dict(
     :identity   => identity,
     :sqrt       => sqrt,
@@ -20,19 +19,24 @@ const SCALE_FUNCTIONS = Dict(
 )
 
 """
-    update!(chain, jac, θ_new)
+    update!(ansatz, jac, θ_new)
 
 Updates all parameters in `chain` given a flat parameter update vector `θ_new` of size (p,).
 
 # Arguments
 
-* `chain`: Neural Network model. See [`Chain`](@ref)
+* `ansatz`: Wave-function ansatz, [`NeuralAnsatz`](@ref). See also [`Chain`](@ref)
 * `jac`: Jacobian buffer which holds `jac.ranges` information about mapping of flatten parameter
     vector to each `chain` layer.
 * `θ_new`: flatten parameter vector with new updated weights after optimisation step.
 
 """
-function update!(chain::Chain, jac::JacobianBuffer, θ_new::AbstractVector)
+function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
+    chain = ansatz.model
+    amplitude_output = view(last(chain.layers).z, 1, :)
+    ansatz.logψ_centering = maximum(amplitude_output)
+    # println("logψ centering: ", ansatz.logψ_centering)
+
     for (layer, r) in zip(chain.layers, jac.ranges)
         layer.W .= reshape(view(θ_new, r.W), size(layer.W))
         layer.b .= view(θ_new, r.b)
@@ -99,7 +103,7 @@ The number of samples collected for this analysis is `batch*batch_iter`.
 """
 function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
     vmc_buf.start = true # sanity check to allow Elocs calculations
-    batch = size(last(ansatz.model.layers).z, 2)
+    batch = ansatz.model.batch
     E_block = Vector{Rimu.StatsTools.BlockingResult{Float64}}()
 
     for i in 1:batch_iter
@@ -125,4 +129,15 @@ function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz
     )
     println(combined_result)
     return nothing
+end
+
+""" 
+    safe_denom(x, epsilon)
+
+Function that safe checks near zero values of `x`. The `epsilon` define
+how close I want to be careful around zero and return safe value.
+"""
+@inline function safe_denom(x::T, epsilon::T) where T
+    ax = abs(x)
+    return ax < epsilon ? copysign(epsilon, x) : x
 end

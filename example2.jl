@@ -27,7 +27,7 @@ end
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
-N = 50 # number of particles
+N = 10 # number of particles
 M = 10 # number of sites
 
 # -------------------------------------------------------------------
@@ -35,8 +35,12 @@ M = 10 # number of sites
 # -------------------------------------------------------------------
 batch  = 1024
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
-model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; 
-                     batch=batch, device=device, Layer_Norm=true);
+act = tanh_fast
+model = Chain(Dense(M, 200, act; batch=batch, device=device, Layer_Norm=true),
+              Dense(200, 200, act; batch=batch, device=device, Layer_Norm=true),
+              Dense(200, 200, act; batch=batch, device=device, Layer_Norm=true),
+              Dense(200, 2, (identity, act); batch=batch, device=device); 
+              device=device, batch=batch)
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # ALL VARIABLES
@@ -44,21 +48,9 @@ model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast;
 phases = [
     TrainingPhase(
         mode       = :energy,
-        optimiser  = :adam,
-        vmc_sampler= :metropolis,
-        stop       = StopBuffer(var_thr=1000),
-        η          = 0.001f0,
-        skip       = [(1, 50), (300, 200)],  # (epoch, B) → burnin B
-        block_size = 10, 
-        block_min  = 6, 
-        patience   = 3,
-        max_epochs = 500,
-    ),
-    TrainingPhase(
-        mode       = :energy,
         optimiser  = :minSR,
-        vmc_sampler= :ctmc,
-        stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
+        vmc_sampler= :metropolis,
+        stop       = StopBuffer(var_thr=40),
         η          = 0.001f0,
         λ          = 0.001f0,
         skip       = [(1, 20)],
@@ -71,13 +63,13 @@ phases = [
 ]
 
 # RIMU VARIABLES
-addr = near_uniform(BoseFS{N,M});
-H = HubbardReal1D(addr; u=0.1);
-ansatz  = NeuralAnsatz(LogPsi(), H, model, batch); # NN ansatz for wave-function
+addr = BoseFS{N,M}(5=>10);
+H = HubbardMom1D(addr);
+ansatz  = NeuralAnsatz(LogPsiSignTanh(), H, model, batch); # NN ansatz for wave-function
 
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE     = "./weights/example.txt"
+SAVEFILE     = "./weights/example_sign.txt"
 SAVE_WEIGHTS = true
 LOADFILE     = ""
 LOAD_WEIGHTS = false

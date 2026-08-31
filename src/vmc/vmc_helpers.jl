@@ -22,7 +22,7 @@ This structure holds all necessary intermediate variables for VMC steps. If
 mutable struct VMCBuffer{A, VA <: AbstractVector{A}}
     addrs_m::VA                         # (B,)      - spawned and chosen addresses
     flat_addrs_m::VA                    # (total,)  - all spawned addresses
-    flat_vals_m::Vector{Float64}        # (total,)  - outputs NN(flat_addrs_m)
+    flat_vals_m::Vector{Float64}        # (total*out_dim,) - outputs NN(flat_addrs_m)
     flat_offdiag_ham::Vector{Float64}   # (total,)  - H_mn values for all spawned addresses
     diag_ham::Vector{Float64}           # (B,)      - H_nn values
     start::Bool                         # when to start E_loc calculations (after termalisation)
@@ -99,57 +99,14 @@ function _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
 end
 
 """
-    calculate_local_energy!(ansatz, vmc_buf)
-
-This function calculates local energies in VMC. 
-
-```math
-E_{loc}(n) = H_{nn} + \\sum_m H_{nm} * \\frac{\\psi(m)}{\\psi(n)}
-```
-
-It utilise [`VMCBuffer`](@ref) for all necessary intermediate variables for allocation-free 
-calculations. The wave-function ratio is clamped to `Float32` precision of `exp()`.
-
-## Note
-The local energies are clamped at the end to counter node-like instabilities. Those can occur
-not only in nodes themselves but also in not pre-trained neural network which can looks like a 
-node. 
-"""
-function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer)
-    # Taking neccessary stuff from metropolis buffer
-    flat_vals_m = vmc_buf.flat_vals_m   # (total,)
-    diag_ham = vmc_buf.diag_ham         # (B,)
-    flat_Hmn = vmc_buf.flat_offdiag_ham # (total,)
-    walker_idx = vmc_buf.walker_idx     # (total,)
-    E_locs = vmc_buf.E_locs             # (B,)
-    vals_n_cpu = vmc_buf.vals_n_cpu     # (1, B)
-
-    # E_loc(n) = H_nn + Σ_m H_mn * ψ(m) / ψ(n)
-    vals_n_expanded  = view(view(vals_n_cpu, 1, :), walker_idx) # (total,): mapping (B,) -> (total,)
-    flat_vals_m .= clamp.(flat_vals_m .- vals_n_expanded, -80f0, 80f0)
-    flat_vals_m .= flat_Hmn .* exp.(flat_vals_m) # (total,)
-    offdiag_contribs = flat_vals_m
-    E_locs .= diag_ham .+ scatter(+, offdiag_contribs, walker_idx, dstsize=(ansatz.model.batch,))
-
-    # Carefully clip E_locs spikes for smoothening E_locs
-    med = median(E_locs)
-    spike_window = max(50, 5 * abs(med))
-    upper_bound = med + spike_window
-    lower_bound = med - spike_window
-    E_locs .= clamp.(E_locs, lower_bound, upper_bound)
-end
-
-"""
-    get_ctmc_weights!(distro, offsets, vals_n_cpu, batch) -> raw_norm
+    get_ctmc_weights!(distro, offsets, log_psi, batch)
 
 This function calculates CTMC weights for batched approach.
 
 ```math
-w_b = \\frac{|\\psi(n_b)|}{R(n_b)}
+w_b = \\frac{|\\psi(n_b)|}{\\sum_m \\text{distro}(m_b)}
 ```
-where `R` is transition rate also used in VMC proposal step. The function returns
-some normalisation estimate over sampled batch `raw_norm`. It can be used as 
-normalisation approximation over sampled batch.
+where `distro` is CDF probability distribution also used in VMC [`_state_proposal!`](@ref).
 
 ```math
 ||\\psi||^2 = \\sum_s p(s) \\frac{|\\psi^2|}{p(s)} = \\sum_s p(s)*Z*\\frac{|\\psi(s)|}{R(s)} =
@@ -157,13 +114,12 @@ Z * \\mathbf{E}_{s~p} \\big[ \\frac{|\\psi(s)|}{R(s)} \\big]
 ```
 
 # Variables
-
 * `distro`: distribution same as in [`_state_proposal!`](@ref).
 * `offsets`: vector that maps offdiagonal spawns from its spawning source.
-* `vals_n_cpu`: holds logψ values of current batched sample, calculated using ansatz.
+* `log_psi`: holds log amplitudes of wave-function calculated using [`log_psi!`](@ref).
 * `batch`: batch number.
 """
-function get_ctmc_weights!(distro, offsets, vals_n_cpu, batch)
+function get_ctmc_weights!(distro, offsets, log_psi, batch)
     # inverse CDF algorithm
     sum_weights = 0.0
     for b in 1:batch
@@ -172,11 +128,11 @@ function get_ctmc_weights!(distro, offsets, vals_n_cpu, batch)
             total_w += abs(distro[i])
         end
         total_w = log(total_w + 1f-35)
-        vals_n_cpu[1, b] = exp(clamp(vals_n_cpu[1, b] - total_w, -80f0, 80f0))
-        sum_weights += vals_n_cpu[1, b]
+        log_psi[b] = exp(clamp(log_psi[b] - total_w, -80f0, 80f0))
+        sum_weights += log_psi[b]
     end
-    raw_norm = sum_weights / batch
-    vals_n_cpu ./= sum_weights
+    # raw_norm = sum_weights / batch
+    log_psi ./= sum_weights
 
-    return raw_norm # if loss function cares about normalisation
+    # return raw_norm # if loss function cares about normalisation
 end

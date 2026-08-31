@@ -6,6 +6,14 @@ CurrentModule = QuantumNeuralStates
 ```
 
 ```@docs
+AnsatzType
+LogPsi
+LogPsiSignTanh
+
+psi
+log_psi!
+init_gradient_seed
+
 NeuralAnsatz
 MeanField
 _choose_meanfield_function

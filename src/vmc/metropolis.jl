@@ -1,7 +1,7 @@
 
 """
     metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc, raw_norm
+        -> new_addrs, E_locs, weights, grads_n, acc
 
 Similar as [`metropolis_sample!`](@ref) but during proposal step, new addresses are proposed 
 using random draw weighted by hamiltonian elements - heatbath.
@@ -11,7 +11,7 @@ heatbath inspiration:
 https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
 """
 function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = length(addrs_n) # batch 
+    B = ansatz.model.batch # batch 
 
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m   
@@ -25,6 +25,7 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
     E_locs = vmc_buf.E_locs
     flat_vals_m = vmc_buf.flat_vals_m
     vals_n_cpu = vmc_buf.vals_n_cpu  
+    vec_cpu = vmc_buf.vec_cpu
 
     # Due to uknown size of all possible offdiagonals I push! dynamically
     empty!(flat_addrs_all)
@@ -62,24 +63,27 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
 
     # --- STEP 2: NN forward on proposals ---------------------------------------------
     vals_m = compute_logψ(ansatz, addrs_m)
-    copyto!(ansatz.z_cpu, vals_m)
+    copyto!(ansatz.z_cpu, vals_m)   
     if ansatz.meanfield !== nothing
         compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
     end
 
     # --- STEP 3: NN on starting addresses --------------------------------------------
-    vals_n  = compute_logψ(ansatz, addrs_n) #[1,:]
+    vals_n = compute_logψ(ansatz, addrs_n)
     copyto!(vals_n_cpu, vals_n)
     if ansatz.meanfield !== nothing
         compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
     end
 
+    n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
+    m_logψ, _ = log_psi!(ansatz.ansatz_type, ansatz, ansatz.z_cpu)
+
     # --- STEP 4: acceptance of proposed offdiagonals ---------------------------------
-    ansatz.z_cpu .= exp.(clamp.(2f0 .* (ansatz.z_cpu .- vals_n_cpu), -80f0, 80f0)) # (B,)
-    ratios = ansatz.z_cpu
-    draws     = rand(Float64, B)             # (B,)
-    accepted .= draws .< view(ratios, 1, :)  # (B,) Bool
-    acc       = sum(accepted)/B
+    m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) # (B,)
+    ratios = m_logψ
+    draws = rand(Float64, B)             # (B,)
+    accepted .= draws .< ratios  # (B,) Bool
+    acc = sum(accepted)/B
 
     # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
     addrs_n  .= ifelse.(accepted, addrs_m, addrs_n) # (B,) - reuse addrs_n as buffer
@@ -90,23 +94,16 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
         # no need to calculate gradient during thermalization
         grads_n = nothing
     else
-        # jacobian using last NN forward for calculations -> vals_n 
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)    
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
-
-        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
-
-        total_buf .= total_buf .* exp.(clamp.(flat_vals_m, -80f0, 80f0))
     end
-
 
     # --- STEP 6: E_loc calculations --------------------------------------------------
     weights = nothing # uniform weights in Metropolis
-    raw_norm = nothing
     if vmc_buf.start === true
-        calculate_local_energy!(ansatz, vmc_buf)
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B) # saved in vals_n_cpu
+        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
     end
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -115,13 +112,13 @@ function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n
     # weights:   sampler weights 
     # grads_n:   (p,B) gradients            -> GPU 
     # acc:       acceptance over batch input (in %)
-    # raw_norm:  norm approximation over sampled batch
-    return new_addrs, E_locs, weights, grads_n, acc, raw_norm
+    return new_addrs, E_locs, weights, grads_n, acc
+
 end
 
 """
     metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc, raw_norm
+        -> new_addrs, E_locs, weights, grads_n, acc
 
 VMC sampler using Metropolis-Hastings algorithm (MCMC). New addresses are proposed
 from offdiagonal connections and the accepted/rejected using Acceptance ratio.
@@ -142,7 +139,7 @@ off-diagonals spawned from address `n` is same as from address `m`.
 * `ansatz`: ansatz for wave-function evaluation. See [`NeuralAnsatz`](@ref).
 """
 function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = length(addrs_n) # batch 
+    B = ansatz.model.batch # batch 
 
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m       
@@ -156,6 +153,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     E_locs = vmc_buf.E_locs
     flat_vals_m = vmc_buf.flat_vals_m
     vals_n_cpu = vmc_buf.vals_n_cpu 
+    vec_cpu = vmc_buf.vec_cpu
 
     # Due to uknown size of all possible offdiagonals I push! dynamically
     empty!(flat_addrs_all)
@@ -198,18 +196,21 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     end
 
     # --- STEP 3: NN on starting addresses --------------------------------------------
-    vals_n  = compute_logψ(ansatz, addrs_n)
+    vals_n = compute_logψ(ansatz, addrs_n)
     copyto!(vals_n_cpu, vals_n)
     if ansatz.meanfield !== nothing
         compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
     end
 
+    n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
+    m_logψ, _ = log_psi!(ansatz.ansatz_type, ansatz, ansatz.z_cpu)
+
     # --- STEP 4: acceptance of proposed offdiagonals ---------------------------------
-    ansatz.z_cpu .= exp.(clamp.(2f0 .* (ansatz.z_cpu .- vals_n_cpu), -80f0, 80f0)) # (B,)
-    ratios = ansatz.z_cpu
-    draws     = rand(Float64, B)             # (B,)
-    accepted .= draws .< view(ratios, 1, :)  # (B,) Bool
-    acc       = sum(accepted)/B
+    m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) # (B,)
+    ratios = m_logψ
+    draws = rand(Float64, B)             # (B,)
+    accepted .= draws .< ratios  # (B,) Bool
+    acc = sum(accepted)/B
 
     # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
     addrs_n  .= ifelse.(accepted, addrs_m, addrs_n) # (B,) - reuse addrs_n as buffer
@@ -220,21 +221,16 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         # no need to calculate gradient during thermalization
         grads_n = nothing
     else
-        grads_n = back_jacobian!(jacobian_buf)  # (p, B)
+        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
-
-        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
-
-        total_buf .= exp.(clamp.(flat_vals_m, -80f0, 80f0))
     end
 
     # --- STEP 6: E_loc calculations --------------------------------------------------
     weights = nothing # uniform weights in Metropolis
-    raw_norm = nothing
     if vmc_buf.start === true
-        calculate_local_energy!(ansatz, vmc_buf)
-        raw_norm = get_ctmc_weights!(total_buf, offsets_all, vals_n_cpu, B)        # saved in vals_n_cpu
+        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
     end
 
     # --- RETURNS ---------------------------------------------------------------------
@@ -243,7 +239,6 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # weights:   sampler weights 
     # grads_n:   (p,B) gradients            -> GPU 
     # acc:       acceptance over batch input (in %)
-    # raw_norm:  norm approximation over sampled batch
-    return new_addrs, E_locs, weights, grads_n, acc, raw_norm
+    return new_addrs, E_locs, weights, grads_n, acc
 end
 

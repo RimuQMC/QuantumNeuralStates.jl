@@ -93,7 +93,7 @@ Apply Adam moment updates and performs gradient descent step for parameter optim
 function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n; 
             vmc=:metropolis, burnin=100, mode=:energy, λ=0.001f0, η=0.001f0)
 
-    E_mean, variance, last_addr, acceptance, weights, raw_norm = 
+    E_mean, variance, last_addr, acceptance, weights = 
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
             vmc_sampler=vmc, burnin=burnin, mode=mode)
 
@@ -110,7 +110,7 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
     end
 
     # gradients are in tmp 
-    apply_loss!(tmp, E_locs, w, E_mean, variance, raw_norm, mode)
+    apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
 
     E_grads = adam_buf.E_grads # weighted loss gradients
     copyto!(E_grads, tmp)
@@ -119,7 +119,7 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
 
     θ = jacobian_buf.θ
     @. θ = θ - η*adam_buf.Δθ
-    update!(ansatz.model, jacobian_buf, θ)
+    update!(ansatz, jacobian_buf, θ)
 
     return E_mean, variance, last_addr, acceptance
 end

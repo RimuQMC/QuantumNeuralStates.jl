@@ -5,30 +5,36 @@
 Pre-allocated buffer for backpropagation and Jacobian calculations through a `Dense` layer.
 """
 struct DenseBuffer{DZ <: AbstractArray, D <: AbstractArray}
-    δz::DZ # new sending output (out,) single | (out, N) batch
-    δ ::D  # incoming previous output (in,)  single | (in,  N) batch
+    δz::DZ # new sending output (out, batch)
+    δ ::D  # incoming previous output (in,  batch)
 end
 function DenseBuffer(layer::Dense)
     out_dim, in_dim = size(layer.W)
-    batch = ndims(layer.a) == 1 ? 1 : size(layer.a, 2)
+    batch = size(layer.a, 2)
     δz = similar(layer.a)
-    δ  = batch == 1 ? similar(layer.b, in_dim) : similar(layer.W, in_dim, batch)
+    δ  = similar(layer.W, in_dim, batch)
     return DenseBuffer(δz, δ)
 end
 
 
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
-    if ndims(x) == 1
-        J_W .= δz .* reshape(x, 1, :)
-        J_b .= δz
-    else
-        out_dim, in_dim = size(W)
-        batch   = size(δz, 2)
-        J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
-        J_b .= δz
-    end
+    out_dim, in_dim = size(W)
+    batch   = size(δz, 2)
+    J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
+    J_b .= δz
 end
 
+
+function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,Nothing,LN}, a) where {T,M,V,F,G,B,LN}
+    δz .= layer.act_deriv.(a)
+    return δz
+end
+function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,R,LN}, a) where {T,M,V,F,G,B,R<:Tuple,LN}
+    map(layer.act_deriv, layer.act_ranges) do f, r
+        @views δz[r,:] .= f.(a[r,:])
+    end
+    return δz
+end
 
 """
     back!(layer::Dense, buf, J_W, J_b, δ, x) -> δ_pass
@@ -51,14 +57,16 @@ needs to account for extra normalisation step of pre-activation output.
 """
 function back!(layer::Dense, buf::DenseBuffer, J_W, J_b,
                δ::AbstractArray, x::AbstractArray)
-    buf.δz .= δ .* layer.act_deriv.(layer.a)
+    apply_act_deriv!(buf.δz, layer, layer.a)
+    buf.δz .*= δ
     _fill_JW_Jb!(J_W, J_b, layer.W, buf.δz, x)
     mul!(buf.δ, layer.W', buf.δz, 1f0, 0f0)
     return buf.δ
 end
 function back!(layer::Dense, buf::DenseBuffer, J_W, J_b,
                δ::AbstractArray, x::AbstractArray, ln::LayerNorm)
-    buf.δz .= δ .* layer.act_deriv.(layer.a)
+    apply_act_deriv!(buf.δz, layer, layer.a)
+    buf.δz .*= δ
     ln.J_γ .= buf.δz .* ln.x̂          
     ln.J_β .= buf.δz                    
     ln_backward!(ln, buf.δz)            

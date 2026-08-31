@@ -1,4 +1,5 @@
 # using LinearAlgebra
+
 """
     Dense(in, out, act; kwargs...)
 
@@ -14,7 +15,6 @@ z &= \\text{act\\_func}(a)
 Allocation-free at runtime — all intermediate results are stored in pre-allocated buffers.
 
 # Arguments
-
 * `in`: input dimension.
 * `out`: output dimension.
 * `act`: activation function — must be registered in `ACT_DERIV` (`activations.jl`).
@@ -37,48 +37,59 @@ layer_gpu = Dense(64, 32, relu; batch=16, device=cu)
 layer_ln  = Dense(64, 32, gelu; Layer_Norm=true)
 ```
 """
-mutable struct Dense{T, M <: AbstractMatrix{T}, V <: AbstractVector{T},
-                     F <: Function, G <: Function, B <: AbstractArray{T}}
-    W        ::M
-    b        ::V
-    act_func ::F
+struct Dense{T,M<:AbstractMatrix{T},V<:AbstractVector{T},F<:Union{Function,Tuple},
+                     G<:Union{Function,Tuple},B<:AbstractArray{T},R<:Union{Nothing,Tuple},
+                     LN<:Union{LayerNorm, Nothing}}
+    W::M
+    b::V
+    act_func::F
     act_deriv::G
-    a        ::B
-    z        ::B
+    a::B
+    z::B
+    act_ranges::R
 
     # applying NormLayer or not
-    layer_norm::Union{LayerNorm, Nothing}
+    layer_norm::LN
 end
+# single-activation constructor (R=Nothing)
 function Dense(in::Int, out::Int, act::Function;
-        batch::Int = 1, device::Function = identity, Layer_Norm=false)
-    T   = Float32
-    if act === relu || act === gelu
-        std = T(sqrt(2.0 / in))         # He
-    else
-        std = T(sqrt(2.0 / (in + out))) # Glorot/Xavier
-    end
-    W   = device(randn(T, out, in) .* std)
-    b   = device(zeros(T, out))
-    act_d = get(ACT_DERIV, act, nothing)
-    if act_d === nothing 
-        error("No derivative registered for $act. Use only function define in activations.jl or define yours there.")
-    end
-    if batch == 1
-        a = device(zeros(T, out))
-        z = device(zeros(T, out))
-    else
-        a = device(zeros(T, out, batch))
-        z = device(zeros(T, out, batch))
-    end
+               batch::Int=1, device::Function=identity, Layer_Norm=false)
+    T, W, b, a, z, layer_norm = _dense_alloc(in, out, act; batch, device, Layer_Norm)
+    act_d = _lookup_deriv(act)
 
-    layer_norm = if Layer_Norm===false
-        nothing
-    else
-        LayerNorm(out, batch, device)
-    end
+    M, V, F, G, B, LN = typeof(W), typeof(b), typeof(act), typeof(act_d), typeof(z), typeof(layer_norm)
+    return Dense{T,M,V,F,G,B,Nothing,LN}(W, b, act, act_d, a, z, nothing, layer_norm)
+end
+# multi-activation constructor (R=NTuple{N,UnitRange})
+function Dense(in::Int, out::Int, acts::NTuple{N,Function};
+               batch::Int=1, device::Function=identity, Layer_Norm=false) where N
+    T, W, b, a, z, layer_norm = _dense_alloc(in, out, acts; batch, device, Layer_Norm)
+    act_ds  = map(_lookup_deriv, acts) # tuple-map for activations and its derivatives
+    ranges  = ntuple(i -> i:i, N)
 
-    M, V, F, G, B = typeof(W), typeof(b), typeof(act), typeof(act_d), typeof(z)
-    return Dense{T, M, V, F, G, B}(W, b, act, act_d, a, z, layer_norm)
+    M, V, F, G, B, R, LN = typeof(W), typeof(b), typeof(acts), typeof(act_ds), typeof(z), typeof(ranges), typeof(layer_norm)
+    return Dense{T,M,V,F,G,B,R,LN}(W, b, acts, act_ds, a, z, ranges, layer_norm)
+end
+
+"""
+    apply_act!(layer::Dense, a, z)
+
+This function applyies activation function in [`Dense`](@ref) layer. It is designed in
+dispatched way so of I have multiple outputs in layer I can define multiple 
+activation function to be applied (it is used mostly for final neural network outputs
+to allow many wave-function representations. See also [`AnsatzType`](@ref)).
+"""
+function apply_act!(layer::Dense{T,M,V,F,G,B,Nothing,LN}, a, z) where {T,M,V,F,G,B,LN}
+    # single activations
+    z .= layer.act_func.(a)
+    return z
+end
+function apply_act!(layer::Dense{T,M,V,F,G,B,R,LN}, a, z) where {T,M,V,F,G,B,R<:Tuple,LN}
+    # multi activations
+    map(layer.act_func, layer.act_ranges) do f, r
+        @views z[r,:] .= f.(a[r,:])
+    end
+    return z
 end
 
 """
@@ -92,21 +103,15 @@ its layer output for easier chaining.
 * `layer`: a `Dense` layer
 * `x`: input array, shape `(in,)` or `(in, batch)`
 
-## Notes
-Bias `b` is skipped when `act_func === identity` as last output layer of 
-Neural Network represents log(ψ) and wave-function is invariant with multiplication
-of scalar.
 """
 function forward(layer::Dense, x::AbstractArray)
     mul!(layer.a, layer.W, x, 1f0, 0f0)
-    # layer.a .+= layer.b
-    if layer.act_func !== identity
-        layer.a .+= layer.b
-    end
+    layer.a .+= layer.b
     if layer.layer_norm !== nothing
         ln_forward!(layer.layer_norm, layer.a)
     end
-    layer.z  .= layer.act_func.(layer.a)
+
+    apply_act!(layer, layer.a, layer.z)
     return layer.z
 end
 
@@ -118,14 +123,12 @@ this case new `layerMulti` holds input and output of this pass.
 """
 function forward(layer::Dense, x::AbstractArray, layerMulti)
     mul!(layerMulti.a, layer.W, x, 1f0, 0f0)
-    # layer.a .+= layer.b
-    if layer.act_func !== identity
-        layerMulti.a .+= layer.b
-    end
+    layerMulti.a .+= layer.b
     if layer.layer_norm !== nothing
         ln_forward!(layer.layer_norm, layerMulti.a, layerMulti.layer_norm)
     end
-    layerMulti.a  .= layer.act_func.(layerMulti.a)
+
+    apply_act!(layer, layerMulti.a, layerMulti.a)
     return layerMulti.a
 end
 

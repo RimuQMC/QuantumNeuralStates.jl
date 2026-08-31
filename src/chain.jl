@@ -8,12 +8,10 @@ A Neural Network (NN) container that chains layers into a single forward-pass mo
 design is inspired by `Flux.jl` notation (general ML julia library).
 
 # Arguments
-
 * `layers...`: represent Tuple of layers from which the NN should be chained.
                For different layer types see also: [`Dense`](@ref).
 
 # Keyword Arguments
-
 * `device`: function which determine if the NN lives and computes on CPU or GPU
 * `batch`: determine what is the batch size.
 
@@ -28,10 +26,10 @@ Layers are allocation-free at runtime. `z_last` is useful when two forward passe
 are needed simultaneously — save the first output into `z_last` before running the second.
 
 """
-mutable struct Chain{L <: Tuple, X <: AbstractArray, U <: AbstractArray,F<:Function}
-    layers  ::L
-    x       ::X
-    z_last  ::U
+mutable struct Chain{L<:Tuple,X<:AbstractArray,U<:AbstractArray,F<:Function}
+    layers::L
+    x::X
+    z_last::U
 
     device::F
     batch::Int
@@ -40,47 +38,17 @@ function Chain(layers...; device::Function = identity, batch::Int = 1)
     # Define input
     l      = first(layers)
     in_dim = size(l.W, 2)
-    if batch == 1
-        x = similar(l.b, in_dim)
-    else
-        x = similar(l.W, in_dim, batch)
-    end
+    x = similar(l.W, in_dim, batch)
 
     # Define last computed output of NN
     lout    = last(layers)
     out_dim = size(lout.z, 1)
-    if batch == 1
-        z_last = similar(lout.z, out_dim)
-    else
-        z_last = similar(lout.z, out_dim, batch)
-    end
+    z_last = similar(lout.z, out_dim, batch)
 
     L, X, U, F = typeof(layers), typeof(x), typeof(z_last), typeof(device)
-    return Chain{L, X, U, F}(layers, x, z_last, device, batch)
+    return Chain{L,X,U,F}(layers, x, z_last, device, batch)
 end
 
-"""
-    MultiForwardLayer
-
-This struct mimic each Chain layer output variables made for customized batch size
-forward passes. See also [`MultiForwardBuffer`](@ref).
-
-# Arguments
-
-* `a`: is buffer for pre-actiovation and post-activation variable in each Chain layer.
-* `layer_norm`: is buffer for layer normalisation struct with new batch size.
-    
-"""
-mutable struct MultiForwardLayer{A<:AbstractArray,L}
-    a::A
-    layer_norm::Union{L, Nothing}
-
-    function MultiForwardLayer(a::A, ln) where {A<:AbstractArray}
-        L = typeof(ln)
-        return new{A,L}(a, ln)
-    end
-end
-            
 """
     MultiForwardBuffer
 

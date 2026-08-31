@@ -18,7 +18,7 @@ end
 LayerRange(W, b) = LayerRange(W, b, nothing, nothing)
 
 """
-    JacobianBuffer(chain::Chain, buffers::Tuple)
+    JacobianBuffer(ansatz, buffers::Tuple)
 
 Pre-allocated storage for a per-sample Jacobian over a [`Chain`](@ref). 
 Two storages live side by side:
@@ -31,13 +31,13 @@ Two storages live side by side:
 
 # Arguments
 
-* `chain`: Neural Network structure. See [`Chain`](@ref)
+* `ansatz`: [`NeuralAnsatz`](@ref) that holds Neural Network structure. See [`Chain`](@ref)
 * `buffers`: Buffers holdin each layers input/output gradients. See [`DenseBuffer`](@ref).
 
 # Futher Arguments:
 
 * `ranges`: tuple of [`LayerRange`].
-* `δ_init`: output-side seed gradient (vector -> row of ones).
+* `δ_init`: output-side seed gradient
 * `θ`: flatten parameter vector mirroring the chain's current weights.
 * `zipped`: precomputed `(layer, buf, (J_W, J_b), x)` tuples, one per
   layer, fed into the recursive [`_backprop!`].
@@ -57,11 +57,12 @@ struct JacobianBuffer{JC <: AbstractArray, R <: Tuple, DI <: AbstractArray,
     zipped   ::ZP
     ln_zipped::LN
 end
-function JacobianBuffer(chain::Chain, buffers::Tuple)
+function JacobianBuffer(ansatz, buffers::Tuple)
+    chain = ansatz.model
     refW  = first(chain.layers).W
     refb  = first(chain.layers).b
     T     = eltype(refW)
-    batch = ndims(first(chain.layers).a) == 1 ? 1 : size(first(chain.layers).a, 2)
+    batch = chain.batch
 
     # Build ranges and contiguous per-layer Jacobian storage in one pass
     rs        = ()
@@ -78,14 +79,9 @@ function JacobianBuffer(chain::Chain, buffers::Tuple)
         r_b = (offset+1):(offset+nb)  
         offset += nb
 
-        # Contiguous arrays — reshapes inside back! are trivial / free
-        if batch == 1
-            J_W = similar(refW, out_dim, in_dim)
-            J_b = similar(refb, out_dim)
-        else
-            J_W = similar(refW, out_dim, in_dim, batch)
-            J_b = similar(refb, out_dim, batch)
-        end
+        # Contiguous arrays — reshapes inside back!
+        J_W = similar(refW, out_dim, in_dim, batch)
+        J_b = similar(refb, out_dim, batch)
         J_layers = (J_layers..., (J_W, J_b))
 
         if layer.layer_norm !== nothing
@@ -103,11 +99,7 @@ function JacobianBuffer(chain::Chain, buffers::Tuple)
     end
     p = offset
 
-    if batch == 1
-        J = similar(refb, p) # (p,)
-    else
-        J = similar(refW, p, batch) # (p, batch)
-    end
+    J = similar(refW, p, batch) # (p, batch)
 
     # Flat parameter vector, initialised to the chain's current weights
     θ = similar(refb, p)
@@ -121,12 +113,7 @@ function JacobianBuffer(chain::Chain, buffers::Tuple)
     end
 
     # Seed gradient at the output: ones (times batch when batched)
-    last_l = last(chain.layers)
-    if batch == 1
-        δ_init = fill!(similar(last_l.b, 1), one(T)) # (1,)
-    else
-        δ_init = fill!(similar(last_l.a, 1, batch), one(T)) # (1, ... - batched times)
-    end
+    δ_init = init_gradient_seed(ansatz)
 
     # Each layer's input: chain input first, then previous layers' outputs
     layer_inputs = (chain.x, Base.front(map(l -> l.z, chain.layers))...)
@@ -166,38 +153,28 @@ Creates `@view` of each layer's gradients `(J_W, J_b)` (`(J_W, J_b, J_γ, J_β)`
 into the flatten Jacobian `jac.J`. See [`JacobianBuffer`](@ref).
 """
 function flatten_jacobian!(jac::JacobianBuffer)
-    if ndims(jac.J) == 1
-        for (r, (J_W, J_b), ln_e) in zip(jac.ranges, jac.J_layers, jac.ln_zipped)
-            view(jac.J, r.W) .= reshape(J_W, :)
-            view(jac.J, r.b) .= J_b
-            if !isnothing(ln_e)
-                view(jac.J, r.γ) .= reshape(ln_e.J_γ, :)
-                view(jac.J, r.β) .= reshape(ln_e.J_β, :)
-            end
-        end
-    else
-        batch = size(jac.J, 2)
-        for (r, (J_W, J_b), ln_e) in zip(jac.ranges, jac.J_layers, jac.ln_zipped)
-            view(jac.J, r.W, :) .= reshape(J_W, :, batch)
-            view(jac.J, r.b, :) .= J_b
-            if !isnothing(ln_e)
-                view(jac.J, r.γ, :) .= reshape(ln_e.J_γ, :, batch)
-                view(jac.J, r.β, :) .= reshape(ln_e.J_β, :, batch)
-            end
+    batch = size(jac.J, 2)
+    for (r, (J_W, J_b), ln_e) in zip(jac.ranges, jac.J_layers, jac.ln_zipped)
+        view(jac.J, r.W, :) .= reshape(J_W, :, batch)
+        view(jac.J, r.b, :) .= J_b
+        if !isnothing(ln_e)
+            view(jac.J, r.γ, :) .= reshape(ln_e.J_γ, :, batch)
+            view(jac.J, r.β, :) .= reshape(ln_e.J_β, :, batch)
         end
     end
     return jac.J
 end
 
 """
-    back_jacobian!(jac) -> jac.J
+    back_jacobian!(ansatz, jac) -> jac.J
 
 Run the full reverse pass over all layers and assemble the flat Jacobian
 `jac.J`. Returns `jac.J` of shape `(p, batch)` (or `(p,)` for a single
 input): each column is one sample's full gradient with respect to the
 flat parameter vector `θ`.
 """
-function back_jacobian!(jac::JacobianBuffer)
+function back_jacobian!(ansatz, jac::JacobianBuffer)
+    jac.δ_init .= init_gradient_seed(ansatz)
     _backprop!(jac.δ_init, jac.zipped, jac.ln_zipped)
     flatten_jacobian!(jac)
     return jac.J

@@ -1,6 +1,7 @@
 # using Metal
 # using Statistics
 # using KernelAbstractions
+
 """
     MomentumBuffer(p::Int, ansatz; β=0.9f0)
 
@@ -56,13 +57,10 @@ It allows allocation-free, batched and GPU friendly evaluation of `minSR`.
     smoothening. By default `false`. See also [`MomentumBuffer`](@ref).
 * `β`: also used with [`MomentumBuffer`](@ref).
 """
-mutable struct minSRBuffer{T, D, M <: AbstractMatrix{T}, V <: AbstractVector{T},
-                             M64cpu <: AbstractMatrix{D}, X}
+mutable struct minSRBuffer{T,V<:AbstractVector{T},X}
     O_mean::V
     g::V
-    K::M
     Δθ::V
-    K_cpu::M64cpu
     vel::Bool
     moment::X
     weights::V
@@ -71,36 +69,31 @@ mutable struct minSRBuffer{T, D, M <: AbstractMatrix{T}, V <: AbstractVector{T},
 end
 function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
     T = Float32
-    D = Float64
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
-    O_mean      = similar(l.b, p)
-    g           = similar(l.b, N)
-    w           = similar(l.b, N)
-    p_cg        = similar(l.b, N)
-    Ap          = similar(l.b, N)
-    K           = fill!(similar(l.W, N, N), zero(T))
-    K_cpu       = Matrix{D}(undef, N, N)
-    Δθ          = fill!(similar(l.b, p), zero(T))
+    O_mean = similar(l.b, p)
+    g = similar(l.b, N)
+    w = similar(l.b, N)
+    p_cg = similar(l.b, N)
+    Ap = similar(l.b, N)
+    Δθ = fill!(similar(l.b, p), zero(T))
     if !velocity
-        vel     = false
-        moment  = nothing
+        vel = false
+        moment = nothing
     else
-        vel     = true 
-        moment  = MomentumBuffer(p, ansatz; β=β)
+        vel = true 
+        moment = MomentumBuffer(p, ansatz; β=β)
     end
 
-    M       = typeof(K)
-    V       = typeof(O_mean)
-    M64cpu  = typeof(K_cpu)
-    X       = typeof(moment)
-    return minSRBuffer{T, D, M, V, M64cpu,X}(O_mean, g, K, Δθ, K_cpu, vel, moment, w, p_cg, Ap)
+    V = typeof(O_mean)
+    X = typeof(moment)
+    return minSRBuffer{T,V,X}(O_mean, g, Δθ, vel, moment, w, p_cg, Ap)
 end
 
 
 """
     compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, 
-                        minSR_buf, ansatz, mode, λ, weights, raw_norm)
+                        minSR_buf, ansatz, mode, λ, weights)
 
 Computes the minSR (Stochastic Reconfiguration) natural gradient step `Δθ` using 
 a matrix-free [`cg_solve!`](@ref).
@@ -124,10 +117,9 @@ function gradient, see [`apply_loss!`](@ref).
 * `mode`: loss function mode for gradient calculations.
 * `λ`: Tikhonov regularisation.
 * `weights`: VMC sampler weights. See [`vmc_sample!`](@ref).
-* `raw_norm`: VMC estimate of normalisation over batched sample.
 """
 function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf, 
-                        vmc_buf, minSR_buf, ansatz, mode, λ, weights, raw_norm)
+                        vmc_buf, minSR_buf, ansatz, mode, λ, weights)
 
     J = jacobian_buf.J
     O_mean = minSR_buf.O_mean
@@ -142,11 +134,11 @@ function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf,
 
     if weights === nothing
         w = Float32(sqrt(1/N))     # uniform weights from Metropolis MC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, raw_norm, mode)
+        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
     else
         weights .= sqrt.(weights)
         w = weights                # weights from CTMC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, raw_norm, mode)
+        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
         copyto!(wgpu, w)
     end
 
@@ -211,7 +203,7 @@ also [`compute_minSR_cg!`](@ref).
 function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; 
                 vmc=:metropolis, burnin=100, mode=:energy, λ=0.001f0, η = 0.001f0)
 
-    E_mean, variance, last_addr, acceptance, weights, raw_norm = 
+    E_mean, variance, last_addr, acceptance, weights = 
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf; 
                         vmc_sampler=vmc, burnin=burnin, mode=mode)
 
@@ -221,7 +213,8 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         return E_mean, variance, last_addr, acceptance
     end
 
-    compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, ansatz, mode, λ, weights, raw_norm)
+    compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, 
+                      ansatz, mode, λ, weights)
     Δθ = minSR_buf.Δθ
     θ = jacobian_buf.θ
 
@@ -241,7 +234,7 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
 
     @. θ = θ - η*Δθ  # update weights vector in jacobian_buf
 
-    update!(ansatz.model, jacobian_buf, θ)  # update weights in NN model
+    update!(ansatz, jacobian_buf, θ)  # update weights in NN model
 
     return E_mean, variance, last_addr, acceptance
 end

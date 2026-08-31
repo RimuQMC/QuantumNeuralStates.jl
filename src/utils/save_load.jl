@@ -93,6 +93,7 @@ function save_input_scale(filename::String, ansatz)
     open(filename, "w") do io
         _write_input_scale(io, ansatz)
     end
+    @info "Input scaling saved to $filename.)"
 end
 
 """
@@ -246,9 +247,9 @@ function load_master(ansatz, filename::String)
     end
 
     @info "Weights loaded from $filename ($p parameters, input size $(size(x)))"
-    if size(x, 2) == 1
-        x = vec(x)      # if batch = 1, x is vector (not matrix)
-    end
+    # if size(x, 2) == 1
+    #     x = vec(x)      # if batch = 1, x is vector (not matrix)
+    # end
     return x
 end
 
