@@ -120,7 +120,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
 
             addrs_n     = last_addrs
             last_accept = acceptance
-            push_epoch!(block, E_mean, variance)
+            push_epoch!(block, Array(E_mean)[1], Array(variance)[1])
 
             if markov
                 log_markov_chain(markovfile, addrs_n; start=false)

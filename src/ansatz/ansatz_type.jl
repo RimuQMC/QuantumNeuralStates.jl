@@ -117,8 +117,10 @@ function log_psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
     return out1, one(T) # log|ψ|, sign
 end
 
-function psi(::LogPsi, ansatz, flat_vals::AbstractVector)
-    return exp.(clamp.(flat_vals .- ansatz.logψ_centering, -80f0, 80f0))
+function psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
+    logψ, _ = log_psi!(ansatz, vals)
+    logψ = exp.(clamp.(logψ, -80f0, 80f0))
+    return logψ
 end
 
 function init_gradient_seed(::LogPsi, ansatz)

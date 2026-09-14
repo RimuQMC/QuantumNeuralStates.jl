@@ -43,8 +43,8 @@ model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch, devi
 phases = [
     TrainingPhase(
         mode       = :energy,
-        optimiser  = :adam,
-        vmc_sampler= :metropolis,
+        optimiser  = :minSR,
+        vmc_sampler= :ctmc,
         stop       = StopBuffer(var_thr=1000),
         η          = 0.001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
@@ -56,7 +56,7 @@ phases = [
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
-        vmc_sampler= :metropolis,
+        vmc_sampler= :ctmc,
         stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
         η          = 0.001f0,
         λ          = 0.001f0,

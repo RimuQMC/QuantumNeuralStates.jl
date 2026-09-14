@@ -117,19 +117,19 @@ function gradient, see [`apply_loss!`](@ref).
 * `λ`: Tikhonov regularisation.
 * `weights`: VMC sampler weights. See [`vmc_sample!`](@ref).
 """
-function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf, 
+function compute_minSR_cg!(E_mean, variance, jacobian_buf, 
                         vmc_buf, minSR_buf, ansatz, mode, λ, weights)
 
     J = jacobian_buf.J
     O_mean = minSR_buf.O_mean
-    g = minSR_buf.g
+    # g = minSR_buf.g
     Δθ = minSR_buf.Δθ
-    wgpu = minSR_buf.weights
+    # wgpu = minSR_buf.weights
 
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.diag_ham
+    tmp = vmc_buf.diag_ham_gpu
 
-    N = length(E_locs) # number of samples
+    N = ansatz.model.batch
 
     if weights === nothing
         w = Float32(sqrt(1/N))     # uniform weights from Metropolis MC
@@ -138,7 +138,7 @@ function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf,
         weights .= sqrt.(weights)
         w = weights                # weights from CTMC
         apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
-        copyto!(wgpu, w)
+        # copyto!(wgpu, w)
     end
 
     mean!(O_mean, J)        # (p,) in-place: calculate mean of J 
@@ -148,18 +148,23 @@ function compute_minSR_cg!(E_mean::Float64, variance::Float64, jacobian_buf,
     if weights === nothing
         @. J_bar = w * J_bar
     else
-        J_bar .*= reshape(wgpu, 1, :)
+        # J_bar .*= reshape(wgpu, 1, :)
+        J_bar .*= reshape(w, 1, :)
     end
-    copyto!(g, tmp)
+    println(w)
+    # copyto!(g, tmp)
+    g = tmp
     p_cg   = minSR_buf.p_cg
     Ap  = minSR_buf.Ap
 
     # needed GPU synchronisation for CG solver
     backend = KernelAbstractions.get_backend(J_bar)
     KernelAbstractions.synchronize(backend)
-    cg_solve!(wgpu, J_bar, λ, g, p_cg, Ap, Δθ) # wgpu -> solution of CG solver
+    cg_solve!(w, J_bar, λ, g, p_cg, Ap, Δθ) # wgpu -> solution of CG solver
+    println(w)
 
-    mul!(Δθ, J_bar, wgpu, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
+    # mul!(Δθ, J_bar, wgpu, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
+    mul!(Δθ, J_bar, w, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
 end
 
 """

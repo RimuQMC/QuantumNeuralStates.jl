@@ -49,21 +49,30 @@ The local energies are clamped [`elocs_clamping!`](@ref) at the end to counter n
 instabilities. Those can occur not only in nodes themselves but also in not pre-trained 
 neural network which can looks like a node. 
 """
-function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign)
-    calculate_local_energy!(ansatz.ansatz_type, ansatz, vmc_buf, n_logψ, n_sign)
+function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign, m_logψ, m_sign)
+    calculate_local_energy!(ansatz.ansatz_type, ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign)
 end
-function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign)
-    flat_vals_m = vmc_buf.flat_vals_m
+function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer, 
+                                 n_logψ, n_sign, m_logψ, m_sign)
+    # flat_vals_m = vmc_buf.flat_vals_m
     diag_ham    = vmc_buf.diag_ham
     flat_Hmn    = vmc_buf.flat_offdiag_ham
-    offsets     = vmc_buf.offsets
+
+    diag_ham_gpu = vmc_buf.diag_ham_gpu         #####     
+    flat_Hmn_gpu = vmc_buf.flat_offdiag_ham_gpu #####
+    offsets_gpu = vmc_buf.offsets_gpu           #####
+
     E_locs      = vmc_buf.E_locs
 
-    vals_m = reshape(flat_vals_m, ansatz.ansatz_type.num_outputs, :)
-    m_logψ, m_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_m)
+    copyto!(diag_ham_gpu, diag_ham)
+    Hmn_gpu = ensure_capacity!(flat_Hmn_gpu, length(flat_Hmn))
+    copyto!(Hmn_gpu, flat_Hmn)
+
+    # vals_m = reshape(flat_vals_m, ansatz.ansatz_type.num_outputs, :)
+    # m_logψ, m_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_m)
 
     backend = KernelAbstractions.get_backend(E_locs)
-    _local_energy_kernel!(backend)(E_locs, diag_ham, offsets, flat_Hmn, m_logψ, m_sign, 
+    _local_energy_kernel!(backend)(E_locs, diag_ham_gpu, offsets_gpu, Hmn_gpu, m_logψ, m_sign, 
                                    n_logψ, n_sign; ndrange=ansatz.model.batch)
     KernelAbstractions.synchronize(backend)
 

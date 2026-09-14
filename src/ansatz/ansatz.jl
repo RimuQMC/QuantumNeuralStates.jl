@@ -307,44 +307,70 @@ preserved.
 * `flat_vals_m`: the result of `logψ` computations are saved in this array which is dynamically
     sized.
 """
-function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, flat_vals_m::AbstractArray)    
-    empty!(flat_vals_m) 
-    if ansatz.multi_forward_buffer !== nothing
-        batch = ansatz.multi_forward_buffer.buffer_size
-    else
-        batch = ansatz.model.batch
-    end
+function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, 
+                             vals_buf::GPUGrowBuffer)
     total = length(flat_addrs_m)
+    flat_vals_m = ensure_capacity!(vals_buf, total) # view into vals_buf.data, sized exactly to `total`
+
+    buf   = ansatz.multi_forward_buffer
+    batch = buf !== nothing ? buf.buffer_size : ansatz.model.batch
     n_chunks = cld(total, batch)
-    # chunked NN forward pass over all off-diagonal addresses
+
     for c in 1:n_chunks
         i_start = (c-1) * batch + 1
         i_end   = min(c * batch, total)
         n_real  = i_end - i_start + 1
+        tmp_addrs = view(flat_addrs_m, i_start:i_end)
 
-        tmp_addrs = view(flat_addrs_m, i_start:i_end)  # slicing of vector for batch size pass
+        raw = buf !== nothing ? compute_logψ(ansatz, tmp_addrs, buf) : compute_logψ(ansatz, tmp_addrs)
 
-        if ansatz.multi_forward_buffer !== nothing
-            raw = compute_logψ(ansatz, tmp_addrs, ansatz.multi_forward_buffer)
-            copyto!(ansatz.multi_forward_buffer.z_cpu, raw)    
-
-            if ansatz.meanfield !== nothing 
-                compute_mflogψ!(ansatz, tmp_addrs, ansatz.multi_forward_buffer.z_cpu, ansatz.multi_forward_buffer)
-            end
-
-            append!(flat_vals_m, view(ansatz.multi_forward_buffer.z_cpu, :, 1:n_real))
-        else
-            raw = compute_logψ(ansatz, tmp_addrs)
-            copyto!(ansatz.z_cpu, raw)    
-
-            if ansatz.meanfield !== nothing
-                compute_mflogψ!(ansatz, tmp_addrs, ansatz.z_cpu)
-            end
-
-            append!(flat_vals_m, view(ansatz.z_cpu, :, 1:n_real))
+        if ansatz.meanfield !== nothing
+            mfresult = buf !== nothing ? compute_mflogψ(ansatz, tmp_addrs, buf) : compute_mflogψ(ansatz, tmp_addrs)
+            raw .= raw .+ mfresult
         end
+
+        copyto!(view(flat_vals_m, :, i_start:i_end), view(raw, :, 1:n_real))
     end
+    return flat_vals_m
 end
+# function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, flat_vals_m::AbstractArray)    
+#     empty!(flat_vals_m) 
+#     if ansatz.multi_forward_buffer !== nothing
+#         batch = ansatz.multi_forward_buffer.buffer_size
+#     else
+#         batch = ansatz.model.batch
+#     end
+#     total = length(flat_addrs_m)
+#     n_chunks = cld(total, batch)
+#     # chunked NN forward pass over all off-diagonal addresses
+#     for c in 1:n_chunks
+#         i_start = (c-1) * batch + 1
+#         i_end   = min(c * batch, total)
+#         n_real  = i_end - i_start + 1
+#
+#         tmp_addrs = view(flat_addrs_m, i_start:i_end)  # slicing of vector for batch size pass
+#
+#         if ansatz.multi_forward_buffer !== nothing
+#             raw = compute_logψ(ansatz, tmp_addrs, ansatz.multi_forward_buffer)
+#             copyto!(ansatz.multi_forward_buffer.z_cpu, raw)    
+#
+#             if ansatz.meanfield !== nothing 
+#                 compute_mflogψ!(ansatz, tmp_addrs, ansatz.multi_forward_buffer.z_cpu, ansatz.multi_forward_buffer)
+#             end
+#
+#             append!(flat_vals_m, view(ansatz.multi_forward_buffer.z_cpu, :, 1:n_real))
+#         else
+#             raw = compute_logψ(ansatz, tmp_addrs)
+#             copyto!(ansatz.z_cpu, raw)    
+#
+#             if ansatz.meanfield !== nothing
+#                 compute_mflogψ!(ansatz, tmp_addrs, ansatz.z_cpu)
+#             end
+#
+#             append!(flat_vals_m, view(ansatz.z_cpu, :, 1:n_real))
+#         end
+#     end
+# end
 
 """
     compute_ψ_64(ansatz, addr) -> Float64.(exp.(logψ))

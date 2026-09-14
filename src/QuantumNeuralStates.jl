@@ -7,7 +7,9 @@ using Rimu
 using Gutzwiller
 using Printf
 using Statistics
+using Random
 using KernelAbstractions
+using Atomix
 using SpecialFunctions: loggamma
 
 const PACKAGE_NAME = "QuantumNeuralStates"
@@ -30,6 +32,7 @@ include("./backpropagation/backpropagation.jl") # needs to be included as last b
 include("./utils/save_load.jl")
 include("./utils/network_health_statistics.jl")
 include("./utils/utils.jl")
+include("./utils/gpu_helpers.jl")
 
 # Dispatch functions for Importance Sampling in Rimu
 import Rimu.DictVectors: deposit!   

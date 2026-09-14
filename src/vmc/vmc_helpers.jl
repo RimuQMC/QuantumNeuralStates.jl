@@ -20,42 +20,63 @@ This structure holds all necessary intermediate variables for VMC steps. If
 * `addr`: Rimu type of address in Fock-state representation.
 
 """
-mutable struct VMCBuffer{A, VA <: AbstractVector{A}}
+mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer, 
+                         BAI <: AbstractArray{Int32}, BAF <: AbstractArray{Float32}}
     addrs_m::VA                         # (B,)      - spawned and chosen addresses
     flat_addrs_m::VA                    # (total,)  - all spawned addresses
-    flat_vals_m::Vector{Float64}        # (total*out_dim,) - outputs NN(flat_addrs_m)
+    flat_vals_m::G        # (total*out_dim,) - outputs NN(flat_addrs_m)
     flat_offdiag_ham::Vector{Float64}   # (total,)  - H_mn values for all spawned addresses
+    flat_offdiag_ham_gpu::G   # (total,)  - H_mn values for all spawned addresses
     diag_ham::Vector{Float64}           # (B,)      - H_nn values
+    diag_ham_gpu::BAF          # (B,)      - H_nn values
     start::Bool                         # when to start E_loc calculations (after termalisation)
-    offsets::Vector{Int}                # (B+1,)    - number of offdiagonals from each spawning address
-    vals_n_cpu::Matrix{Float64}         # (1, B)    - for transfer GPU -> CPU
-    vec_cpu::Vector{Float64}            # (B,)      - for transfer view on CPU
-    E_locs::Vector{Float64}             # (B,)      - calculated local energies, and GPU -> CPU usage
+    offsets::Vector{Int32}                # (B+1,)    - number of offdiagonals from each spawning address
+    offsets_gpu::BAI                # (B+1,)    - number of offdiagonals from each spawning address
+    # vals_n_cpu::Matrix{Float64}         # (1, B)    - for transfer GPU -> CPU
+    # vec_cpu::Vector{Float64}            # (B,)      - for transfer view on CPU
+    E_locs::BAF             # (B,)      - calculated local energies, and GPU -> CPU usage
     accepted::Vector{Bool}              # (B,)      - boolean vector accept/reject
-    total_buf::Vector{Float64}          # (total,)  - helper for CTMC Proposal buffer
+    # total_buf::Vector{Float64}          # (total,)  - helper for CTMC Proposal buffer
     block_idx::Int                      # keeps track of what iteration block I am in
+    k_prop_buf::BAI
+    k_prop_cpu::Vector{Int32}
+    E_mean::BAF
+    variance::BAF
 end
 function VMCBuffer(ansatz, addr)
     batch = ansatz.model.batch
-    out_dim = size(last(ansatz.model.layers).z, 1)
+    model_z = last(ansatz.model.layers).z
+    out_dim = size(model_z, 1)
     A = typeof(addr)
-    T = Float32
+    T = eltype(model_z)
+    backend = KernelAbstractions.get_backend(model_z)
 
     start = false
     addrs_m = Vector{A}(undef, batch)
     flat_addrs_m = Vector{A}(undef, 0)
-    flat_vals_m = Vector{T}(undef, 0)
+    flat_vals_m = GPUGrowBuffer(backend, T, out_dim, batch)
     flat_offdiag_ham = Vector{T}(undef, 0)
+    flat_offdiag_ham_gpu = GPUGrowBuffer(backend, T, 1, batch)
     diag_ham = Vector{T}(undef, batch)
+    diag_ham_gpu = KernelAbstractions.allocate(backend, T, batch)
     offset = Vector{Int32}(undef, batch+1)
-    vals_n_cpu = Matrix{T}(undef, out_dim, batch)
-    vec_cpu = Vector{T}(undef, batch)
-    E_locs = Vector{T}(undef, batch)
+    offset_gpu = KernelAbstractions.allocate(backend, Int32, batch+1)
+    # vals_n_cpu = Matrix{T}(undef, out_dim, batch)
+    # vec_cpu = Vector{T}(undef, batch)
+    E_locs = KernelAbstractions.allocate(backend, T, batch)
     accepted = Vector{Bool}(undef, batch)
-    total_buf = Vector{T}(undef, 0)
+    k_prop_buf = KernelAbstractions.allocate(backend, Int32, batch)
+    k_prop_cpu = Vector{Int32}(undef, batch)
+    E_mean = KernelAbstractions.allocate(backend, T, 1)
+    variance = KernelAbstractions.allocate(backend, T, 1)
+    # total_buf = Vector{T}(undef, 0)
     VA = typeof(addrs_m)
-    return VMCBuffer{A, VA}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, diag_ham,
-                    start, walker_idx, offset, vals_n_cpu, vec_cpu, E_locs, accepted, total_buf, 1)
+    BAF = typeof(diag_ham_gpu)
+    BAI = typeof(offset_gpu)
+    G = typeof(flat_vals_m)
+    return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, 
+                    flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offset, offset_gpu, 
+                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance)
 end
 
 # @kernel function _state_proposal_kernel!(addrs_m, offsets, addrs_m_all, distro, rand_vals)
@@ -117,14 +138,14 @@ The new proposed address is then randomly picked from distribution `distro`.
 
         total_w = 0f0
         for i in (start+1):stop
-            total_w += abs(distro[i])
+            total_w += abs(exp(distro[i]))
         end
 
         target = rand_vals[b] * total_w
         cumul = 0f0
         k = stop   # fallback
         for i in (start+1):stop
-            cumul += abs(distro[i])
+            cumul += abs(exp(distro[i]))
             if cumul >= target
                 k = i
                 break
@@ -134,8 +155,8 @@ The new proposed address is then randomly picked from distribution `distro`.
         k_prop_out[b] = k # proposed indices
     end
 end
-function state_proposal!(addrs_m, addrs_m_all, offsets, distro, rand_vals, 
-                         k_prop_buf, k_prop_cpu, batch)
+function state_proposal!(addrs_m, addrs_m_all, offsets, distro, 
+                         rand_vals, k_prop_buf, k_prop_cpu, batch)
     Random.rand!(rand_vals)
 
     backend = KernelAbstractions.get_backend(distro)
@@ -147,7 +168,8 @@ function state_proposal!(addrs_m, addrs_m_all, offsets, distro, rand_vals,
     @inbounds for b in 1:batch
         addrs_m[b] = addrs_m_all[k_prop_cpu[b]]
     end
-    return addrs_m
+    # return addrs_m
+    return nothing
 end
 # function _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
 #     nonzero_count = offsets[b+1] - offsets[b]
@@ -207,7 +229,7 @@ end
     @inbounds begin
         total = 0f0
         for i in (offsets[b]+1):offsets[b+1]
-            total += abs(distro[i])
+            total += abs(exp(distro[i]))
         end
         log_psi[b] = exp(clamp(log_psi[b] - log(total + 1f-35), -80f0, 80f0))
     end
