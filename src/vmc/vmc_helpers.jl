@@ -42,6 +42,7 @@ mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer,
     k_prop_cpu::Vector{Int32}
     E_mean::BAF
     variance::BAF
+    weights::BAF
 end
 function VMCBuffer(ansatz, addr)
     batch = ansatz.model.batch
@@ -69,6 +70,7 @@ function VMCBuffer(ansatz, addr)
     k_prop_cpu = Vector{Int32}(undef, batch)
     E_mean = KernelAbstractions.allocate(backend, T, 1)
     variance = KernelAbstractions.allocate(backend, T, 1)
+    weights = KernelAbstractions.allocate(backend, T, batch)
     # total_buf = Vector{T}(undef, 0)
     VA = typeof(addrs_m)
     BAF = typeof(diag_ham_gpu)
@@ -76,7 +78,7 @@ function VMCBuffer(ansatz, addr)
     G = typeof(flat_vals_m)
     return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, 
                     flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offset, offset_gpu, 
-                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance)
+                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights)
 end
 
 # @kernel function _state_proposal_kernel!(addrs_m, offsets, addrs_m_all, distro, rand_vals)
@@ -215,25 +217,25 @@ Z * \\mathbf{E}_{s~p} \\big[ \\frac{|\\psi(s)|}{R(s)} \\big]
 * `log_psi`: holds log amplitudes of wave-function calculated using [`log_psi!`](@ref).
 * `batch`: batch number.
 """
-function get_ctmc_weights!(distro, offsets, log_psi, batch)
+function get_ctmc_weights!(distro, offsets, log_psi, weights, batch)
     backend = KernelAbstractions.get_backend(distro)
-    _ctmc_weights_kernel!(backend)(log_psi, offsets, distro; ndrange=batch)
+    _ctmc_weights_kernel!(backend)(log_psi, offsets, distro, weights; ndrange=batch)
     KernelAbstractions.synchronize(backend)
 
-    sum_weights = sum(log_psi)
-    log_psi ./= sum_weights
+    sum_weights = sum(weights)
+    weights ./= sum_weights
 end
-
-@kernel function _ctmc_weights_kernel!(log_psi, offsets, distro)
+@kernel function _ctmc_weights_kernel!(log_psi, offsets, distro, weights)
     b = @index(Global)
     @inbounds begin
         total = 0f0
         for i in (offsets[b]+1):offsets[b+1]
             total += abs(exp(distro[i]))
         end
-        log_psi[b] = exp(clamp(log_psi[b] - log(total + 1f-35), -80f0, 80f0))
+        weights[b] = exp(clamp(log_psi[b] - log(total + 1f-35), -80f0, 80f0))
     end
 end
+
 # function get_ctmc_weights!(distro, walker_idx, log_psi, tmp_vec, batch)
 #     NNlib.scatter!(+, tmp_vec, distro, walker_idx) # sum of |ψ(m)| offdiagonals
 #     log_psi .= exp.(clamp.(log_psi .- log.(tmp_vec .+ 1f-35), -80f0, 80f0))

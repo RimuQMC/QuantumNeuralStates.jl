@@ -57,9 +57,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     vmc_buf = VMCBuffer(ansatz, addr)
     n_params = length(jac_buf.θ)
 
-    all_E     = Float64[]
-    all_E_err = Float64[]
-    all_var   = Float64[]
+    all_E     = Float32[]
+    all_E_err = Float32[]
+    all_var   = Float32[]
 
     tmp_neuron_statistics = ansatz.neuron_statistics
     tmp_jacobian_statistics = ansatz.jacobian_statistics
@@ -91,9 +91,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
 
         block       = BlockStats()
-        E_hist      = Float64[]
-        E_err_hist  = Float64[]
-        var_hist    = Float64[]
+        E_hist      = Float32[]
+        E_err_hist  = Float32[]
+        var_hist    = Float32[]
         epoch       = 0
         converged   = false
         last_accept = NaN
@@ -181,7 +181,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         save_master(savefile, jac_buf.θ, addrs_n, ansatz)
     end
 
-    final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
+    # final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
     
     return all_E, all_E_err, all_var, addrs_n
 end

@@ -1,112 +1,112 @@
 
-"""
-    ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc
-
-Similar as [`ctmc_sample!`](@ref) but during proposal step, new addresses are proposed 
-using random draw weighted by hamiltonian elements - heatbath. Also CTMC weights
-calculation is weighted with its hamiltonian values.
-
-## Notes
-heatbath inspiration:
-https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
-"""
-function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = length(addrs_n) # batch 
-
-    # --- STEP 0: all needed variables from buffer ------------------------------------
-    addrs_m = vmc_buf.addrs_m         
-    diag_ham = vmc_buf.diag_ham     
-    flat_addrs_all = vmc_buf.flat_addrs_m
-    flat_Hmn_all = vmc_buf.flat_offdiag_ham
-    walker_idx_all = vmc_buf.walker_idx
-    offsets_all = vmc_buf.offsets
-    accepted = vmc_buf.accepted
-    total_buf = vmc_buf.total_buf
-    vals_n_cpu = vmc_buf.vals_n_cpu
-    vec_cpu = vmc_buf.vec_cpu
-    E_locs = vmc_buf.E_locs
-    flat_vals_m = vmc_buf.flat_vals_m
-
-    # Due to uknown size of all possible offdiagonals I push! dynamically
-    empty!(flat_addrs_all)
-    empty!(flat_Hmn_all)
-    empty!(walker_idx_all)
-    empty!(total_buf)
-
-    # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
-    offsets_all[1] = 0
-    for b in 1:B
-        col           = hamiltonian * addrs_n[b]
-        diag_ham[b]   = diagonal_element(col)
-
-        for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-          # collect ALL off-diagonals for E_loc
-          if iszero(H_mn) # ignore zero off_diagonals elements
-              continue
-          end
-
-          # reject any offdiagonal that leaves the truncated subspace
-          occ_m = onr(addr_m)
-          if ansatz.truncation !== nothing && violates_truncation(occ_m, ansatz.truncation.mask)
-              continue
-          end
-
-          push!(flat_addrs_all, addr_m)
-          push!(flat_Hmn_all,   H_mn)
-          push!(walker_idx_all, b)
-        end
-        offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
-    end
-
-    # --- STEP 2: NN forward on offdiagonals ----------------------------------------
-    multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
-
-    # --- STEP 3: Propose new addresses ---------------------------------------------
-    resize!(total_buf, length(flat_addrs_all))
-    total_buf .= psi(ansatz, flat_vals_m) .* flat_Hmn_all
-
-    for b in 1:B
-        _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
-    end
-
-    # --- STEP 4: NN on starting addresses --------------------------------------------
-    vals_n  = compute_logψ(ansatz, addrs_n)
-    copyto!(vals_n_cpu, vals_n)
-    if ansatz.meanfield !== nothing
-        compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
-    end
-
-    if !vmc_buf.start
-        grads_n = nothing
-    else
-        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
-        neuron_statistics(ansatz; idx=vmc_buf.block_idx)
-        jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
-    end
-
-    # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
-    addrs_n  .= addrs_m # (B,) - reuse addrs_n as buffer
-    new_addrs = addrs_n # reference for addrs_n 
-
-    # --- STEP 6: E_loc calculations --------------------------------------------------
-    if vmc_buf.start === true
-        n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
-        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign) # saved in E_locs
-        get_ctmc_weights!(total_buf, offsets_all, n_logψ, B) # saved in n_logψ
-        copyto!(vec_cpu, n_logψ)
-    end
-    acc = 1
-    weights = vec_cpu 
-
-    # --- RETURNS ---------------------------------------------------------------------
-    # new_addrs: (B,) next walker positions -> CPU
-    # E_locs:    (B,) local energies        -> CPU (possibly GPU)
-    # weights:   sampler weights 
-    # grads_n:   (p,B) gradients            -> GPU 
-    # acc:       acceptance over batch input (in %)
-    return new_addrs, E_locs, weights, grads_n, acc
-end
+# """
+#     ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+#         -> new_addrs, E_locs, weights, grads_n, acc
+#
+# Similar as [`ctmc_sample!`](@ref) but during proposal step, new addresses are proposed 
+# using random draw weighted by hamiltonian elements - heatbath. Also CTMC weights
+# calculation is weighted with its hamiltonian values.
+#
+# ## Notes
+# heatbath inspiration:
+# https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
+# """
+# function ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+#     B = length(addrs_n) # batch 
+#
+#     # --- STEP 0: all needed variables from buffer ------------------------------------
+#     addrs_m = vmc_buf.addrs_m         
+#     diag_ham = vmc_buf.diag_ham     
+#     flat_addrs_all = vmc_buf.flat_addrs_m
+#     flat_Hmn_all = vmc_buf.flat_offdiag_ham
+#     walker_idx_all = vmc_buf.walker_idx
+#     offsets_all = vmc_buf.offsets
+#     accepted = vmc_buf.accepted
+#     total_buf = vmc_buf.total_buf
+#     vals_n_cpu = vmc_buf.vals_n_cpu
+#     vec_cpu = vmc_buf.vec_cpu
+#     E_locs = vmc_buf.E_locs
+#     flat_vals_m = vmc_buf.flat_vals_m
+#
+#     # Due to uknown size of all possible offdiagonals I push! dynamically
+#     empty!(flat_addrs_all)
+#     empty!(flat_Hmn_all)
+#     empty!(walker_idx_all)
+#     empty!(total_buf)
+#
+#     # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
+#     offsets_all[1] = 0
+#     for b in 1:B
+#         col           = hamiltonian * addrs_n[b]
+#         diag_ham[b]   = diagonal_element(col)
+#
+#         for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
+#           # collect ALL off-diagonals for E_loc
+#           if iszero(H_mn) # ignore zero off_diagonals elements
+#               continue
+#           end
+#
+#           # reject any offdiagonal that leaves the truncated subspace
+#           occ_m = onr(addr_m)
+#           if ansatz.truncation !== nothing && violates_truncation(occ_m, ansatz.truncation.mask)
+#               continue
+#           end
+#
+#           push!(flat_addrs_all, addr_m)
+#           push!(flat_Hmn_all,   H_mn)
+#           push!(walker_idx_all, b)
+#         end
+#         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
+#     end
+#
+#     # --- STEP 2: NN forward on offdiagonals ----------------------------------------
+#     multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
+#
+#     # --- STEP 3: Propose new addresses ---------------------------------------------
+#     resize!(total_buf, length(flat_addrs_all))
+#     total_buf .= psi(ansatz, flat_vals_m) .* flat_Hmn_all
+#
+#     for b in 1:B
+#         _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
+#     end
+#
+#     # --- STEP 4: NN on starting addresses --------------------------------------------
+#     vals_n  = compute_logψ(ansatz, addrs_n)
+#     copyto!(vals_n_cpu, vals_n)
+#     if ansatz.meanfield !== nothing
+#         compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
+#     end
+#
+#     if !vmc_buf.start
+#         grads_n = nothing
+#     else
+#         grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
+#         neuron_statistics(ansatz; idx=vmc_buf.block_idx)
+#         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
+#     end
+#
+#     # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
+#     addrs_n  .= addrs_m # (B,) - reuse addrs_n as buffer
+#     new_addrs = addrs_n # reference for addrs_n 
+#
+#     # --- STEP 6: E_loc calculations --------------------------------------------------
+#     if vmc_buf.start === true
+#         n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
+#         calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign) # saved in E_locs
+#         get_ctmc_weights!(total_buf, offsets_all, n_logψ, B) # saved in n_logψ
+#         copyto!(vec_cpu, n_logψ)
+#     end
+#     acc = 1
+#     weights = vec_cpu 
+#
+#     # --- RETURNS ---------------------------------------------------------------------
+#     # new_addrs: (B,) next walker positions -> CPU
+#     # E_locs:    (B,) local energies        -> CPU (possibly GPU)
+#     # weights:   sampler weights 
+#     # grads_n:   (p,B) gradients            -> GPU 
+#     # acc:       acceptance over batch input (in %)
+#     return new_addrs, E_locs, weights, grads_n, acc
+# end
 
 
 """
@@ -132,27 +132,20 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m       
     diag_ham = vmc_buf.diag_ham     
-    # diag_ham_gpu = vmc_buf.diag_ham_gpu         #####     
     flat_addrs_all = vmc_buf.flat_addrs_m
     flat_Hmn_all = vmc_buf.flat_offdiag_ham
-    # flat_Hmn_gpu = vmc_buf.flat_offdiag_ham_gpu #####
-    # walker_idx_all = vmc_buf.walker_idx
     offsets_all = vmc_buf.offsets
-    offsets_gpu = vmc_buf.offsets_gpu           #####
+    offsets_gpu = vmc_buf.offsets_gpu       
     accepted = vmc_buf.accepted
-    # total_buf = vmc_buf.total_buf
-    # vals_n_cpu = vmc_buf.vals_n_cpu 
-    # vec_cpu = vmc_buf.vec_cpu
-    E_locs = vmc_buf.E_locs                     ##### edit
-    flat_vals_m = vmc_buf.flat_vals_m           ##### edit
-    k_prop_buf = vmc_buf.k_prop_buf             #####
-    k_prop_cpu = vmc_buf.k_prop_cpu             #####
+    E_locs = vmc_buf.E_locs                     
+    flat_vals_m = vmc_buf.flat_vals_m       
+    k_prop_buf = vmc_buf.k_prop_buf         
+    k_prop_cpu = vmc_buf.k_prop_cpu     
+    weights = vmc_buf.weights               
 
     # Due to uknown size of all possible offdiagonals I push! dynamically
     empty!(flat_addrs_all)
     empty!(flat_Hmn_all)
-    # empty!(walker_idx_all)
-    # empty!(total_buf)
 
     # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
     offsets_all[1] = 0
@@ -174,29 +167,19 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
           push!(flat_addrs_all, addr_m)
           push!(flat_Hmn_all,   H_mn)
-          # push!(walker_idx_all, b)
         end
         offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
     end
 
-    # copyto!(diag_ham_gpu, diag_ham)
-    # Hmn_gpu = ensure_capacity!(flat_Hmn_gpu, length(flat_Hmn_all))
-    # copyto!(Hmn_gpu, flat_Hmn_all)
-    #
     copyto!(offsets_gpu, offsets_all)
 
     # --- STEP 2: NN forward on offdiagonals ----------------------------------------
     flat_vals_m_view = multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------
-    # resize!(total_buf, length(flat_addrs_all))
-    # total_buf .= psi(ansatz, flat_vals_m)
     m_logψ, m_sign = log_psi!(ansatz, flat_vals_m_view)
 
     state_proposal!(addrs_m, flat_addrs_all, offsets_gpu, m_logψ, E_locs, k_prop_buf, k_prop_cpu, B)
-    # for b in 1:B
-    #     _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b) # new addresses are in addrs_m
-    # end
 
     # --- STEP 4: NN on starting addresses --------------------------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
@@ -206,6 +189,7 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
     # end
 
+    # --- STEP 5: E_loc, gradient, and weights calculations ---------------------------
     if !vmc_buf.start
         grads_n = nothing
     else
@@ -214,32 +198,73 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
         calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign) # saved in E_locs
-        get_ctmc_weights!(m_logψ, offsets_gpu, n_logψ, B) # saved in n_logψ
+        get_ctmc_weights!(m_logψ, offsets_gpu, n_logψ, weights, B) # saved in weights
     end
 
-    # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
+    # --- STEP 6: new sampled addresses - CPU ONLY ------------------------------------
     addrs_n  .= addrs_m # (B,) - reuse addrs_n as buffer
     new_addrs = addrs_n # reference for addrs_n 
 
-    # --- STEP 6: E_loc calculations --------------------------------------------------
-    # if vmc_buf.start === true
-    #     # n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
-    #     # n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n)
-    #     calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign) # saved in E_locs
-    #     # get_ctmc_weights!(distro, offsets_all, n_logψ, B) # saved in n_logψ
-    #     get_ctmc_weights!(m_logψ, offsets_gpu, n_logψ, B) # saved in n_logψ
-    #     # copyto!(vec_cpu, n_logψ)
-    # end
     acc = 1
-    # weights = vec_cpu 
-    weights = n_logψ
 
     # --- RETURNS ---------------------------------------------------------------------
     # new_addrs: (B,) next walker positions -> CPU
-    # E_locs:    (B,) local energies        -> CPU (possibly GPU)
-    # weights:   sampler weights 
-    # grads_n:   (p,B) gradients            -> GPU 
+    # E_locs:    (B,) local energies        -> CPU/GPU
+    # weights:   sampler weights            -> CPU/GPU
+    # grads_n:   (p,B) gradients            -> CPU/GPU
     # acc:       acceptance over batch input (in %)
     return new_addrs, E_locs, weights, grads_n, acc
 end
 
+@kernel function _collect_offdiagonals_kernel!(local_addrs, local_Hmn, counts, diag_ham,
+                                               addrs_n, hamiltonian, truncation_mask, has_truncation)
+    b = @index(Global)
+    @inbounds begin
+        col = hamiltonian * addrs_n[b]
+        diag_ham[b] = diagonal_element(col)
+
+        buf_addrs = eltype(local_addrs)()   # fresh private Vector{A} for this walker
+        buf_Hmn   = eltype(local_Hmn)()
+
+        for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
+            if iszero(H_mn)
+                continue
+            end
+
+            occ_m = onr(addr_m)
+            if has_truncation && violates_truncation(occ_m, truncation_mask)
+                continue
+            end
+
+            push!(buf_addrs, addr_m)
+            push!(buf_Hmn,   H_mn)
+        end
+
+        local_addrs[b] = buf_addrs
+        local_Hmn[b]   = buf_Hmn
+        counts[b]      = length(buf_addrs)
+    end
+end
+
+function collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_ham,
+                                hamiltonian, addrs_n, ansatz, local_addrs, local_Hmn, counts, B)
+    backend = CPU()
+
+    has_truncation = ansatz.truncation !== nothing
+    truncation_mask = has_truncation ? ansatz.truncation.mask : nothing
+
+    _collect_offdiagonals_kernel!(backend)(local_addrs, local_Hmn, counts, diag_ham,
+                                           addrs_n, hamiltonian, truncation_mask, has_truncation;
+                                           ndrange=B)
+    KernelAbstractions.synchronize(backend)
+
+    # sequential merge — preserves walker order, offdiagonal order within a walker doesn't matter
+    empty!(flat_addrs_all)
+    empty!(flat_Hmn_all)
+    offsets_all[1] = 0
+    for b in 1:B
+        append!(flat_addrs_all, local_addrs[b])
+        append!(flat_Hmn_all,   local_Hmn[b])
+        offsets_all[b+1] = offsets_all[b] + counts[b]
+    end
+end

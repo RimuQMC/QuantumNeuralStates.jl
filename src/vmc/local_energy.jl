@@ -68,6 +68,7 @@ function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
     Hmn_gpu = ensure_capacity!(flat_Hmn_gpu, length(flat_Hmn))
     copyto!(Hmn_gpu, flat_Hmn)
 
+
     # vals_m = reshape(flat_vals_m, ansatz.ansatz_type.num_outputs, :)
     # m_logψ, m_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_m)
 

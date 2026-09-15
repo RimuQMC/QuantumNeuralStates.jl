@@ -45,27 +45,27 @@ phases = [
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(var_thr=1000),
+        # stop       = StopBuffer(var_thr=1000),
         η          = 0.001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 500,
+        max_epochs = 100,
     ),
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
+        # stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
         η          = 0.001f0,
         λ          = 0.001f0,
-        skip       = [(1, 300)],
+        skip       = [(1, 10)],
         η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 1000,
+        max_epochs = 100,
     ),
 ]
 
@@ -77,7 +77,7 @@ ansatz  = NeuralAnsatz(LogPsi(), H, model, batch); # NN ansatz for wave-function
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
 SAVEFILE     = "./weights/example.txt"
-SAVE_WEIGHTS = true
+SAVE_WEIGHTS = false
 LOADFILE     = ""
 LOAD_WEIGHTS = false
 MARKOVFILE   = "MarkovChain.txt" # saving Markov Chain
@@ -87,8 +87,14 @@ SAVE_MARKOV  = false
 # TRAINING LOOP
 # --------------------------------------------------------------------------------------------------------------------------------------
 
-block_E_history, block_E_err_history, block_var_history, new_addrs = run_training_loop(H, ansatz, addr, phases; 
+# block_E_history, block_E_err_history, block_var_history, new_addrs = run_training_loop(H, ansatz, addr, phases; 
+#                                                                             savefile=SAVEFILE, loadfile=LOADFILE, 
+#                                                                             save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
+#                                                                             markovfile=MARKOVFILE, markov=SAVE_MARKOV);
+t = @timed run_training_loop(H, ansatz, addr, phases; 
                                                                             savefile=SAVEFILE, loadfile=LOADFILE, 
                                                                             save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
                                                                             markovfile=MARKOVFILE, markov=SAVE_MARKOV);
+
+println(t.time)
 

@@ -151,7 +151,6 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf,
         # J_bar .*= reshape(wgpu, 1, :)
         J_bar .*= reshape(w, 1, :)
     end
-    println(w)
     # copyto!(g, tmp)
     g = tmp
     p_cg   = minSR_buf.p_cg
@@ -161,7 +160,6 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf,
     backend = KernelAbstractions.get_backend(J_bar)
     KernelAbstractions.synchronize(backend)
     cg_solve!(w, J_bar, λ, g, p_cg, Ap, Δθ) # wgpu -> solution of CG solver
-    println(w)
 
     # mul!(Δθ, J_bar, wgpu, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
     mul!(Δθ, J_bar, w, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
