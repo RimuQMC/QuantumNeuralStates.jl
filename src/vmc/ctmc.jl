@@ -266,9 +266,9 @@ end
 #     has_truncation = ansatz.truncation !== nothing
 #     truncation_mask = has_truncation ? ansatz.truncation.mask : nothing
 #
-#     _collect_offdiagonals_kernel!(backend)(local_addrs, local_Hmn, counts, diag_ham,
-#                                            addrs_n, hamiltonian, truncation_mask, has_truncation;
-#                                            ndrange=B)
+#     _collect_offdiagonals_kernel!(backend, Threads.nthreads())(
+#                         local_addrs, local_Hmn, counts, diag_ham,
+#                         addrs_n, hamiltonian, truncation_mask, has_truncation; ndrange=B)
 #     KernelAbstractions.synchronize(backend)
 #
 #     # sequential merge — preserves walker order, offdiagonal order within a walker doesn't matter
@@ -330,10 +330,10 @@ function collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_h
     empty!(offsets_all)
     push!(offsets_all, Int32(0))   # seed — note Int32 to match offsets_all's eltype
 
-    _collect_offdiagonals_kernel!(backend)(flat_addrs_all, flat_Hmn_all, new_addrs_n,
-                                           diag_ham, offsets_all, addrs_n, hamiltonian,
-                                           truncation_mask, has_truncation, spinlock,
-                                           local_addrs, local_Hmn; ndrange=B)
+    _collect_offdiagonals_kernel!(backend, Threads.nthreads())(
+                flat_addrs_all, flat_Hmn_all, new_addrs_n,diag_ham, offsets_all, addrs_n, 
+                hamiltonian, truncation_mask, has_truncation, spinlock,local_addrs, local_Hmn; 
+                ndrange=B)
     KernelAbstractions.synchronize(backend)
 end
 

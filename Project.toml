@@ -5,6 +5,7 @@ authors = ["xZoidyy <krsek.k@gmail.com>"]
 
 [deps]
 Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Gutzwiller = "934a285b-0f55-4204-bc81-2542b947ab7d"
@@ -26,6 +27,7 @@ Gutzwiller = {rev = "master", url = "https://github.com/RimuQMC/Gutzwiller.jl"}
 
 [compat]
 Atomix = "1.2.1"
+BenchmarkTools = "1.8.0"
 CUDA = "6.2.1"
 DataFrames = "1.8.2"
 Gutzwiller = "0.1.0"
