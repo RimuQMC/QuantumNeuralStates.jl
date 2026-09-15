@@ -20,30 +20,102 @@ This structure holds all necessary intermediate variables for VMC steps. If
 * `addr`: Rimu type of address in Fock-state representation.
 
 """
+# mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer, 
+#                          BAI <: AbstractArray{Int32}, BAF <: AbstractArray{Float32}}
+#     addrs_m::VA                         # (B,)      - spawned and chosen addresses
+#     flat_addrs_m::VA                    # (total,)  - all spawned addresses
+#     flat_vals_m::G        # (total*out_dim,) - outputs NN(flat_addrs_m)
+#     flat_offdiag_ham::Vector{Float32}   # (total,)  - H_mn values for all spawned addresses
+#     flat_offdiag_ham_gpu::G   # (total,)  - H_mn values for all spawned addresses
+#     diag_ham::Vector{Float32}           # (B,)      - H_nn values
+#     diag_ham_gpu::BAF          # (B,)      - H_nn values
+#     start::Bool                         # when to start E_loc calculations (after termalisation)
+#     offsets::Vector{Int32}                # (B+1,)    - number of offdiagonals from each spawning address
+#     offsets_gpu::BAI                # (B+1,)    - number of offdiagonals from each spawning address
+#     # vals_n_cpu::Matrix{Float64}         # (1, B)    - for transfer GPU -> CPU
+#     # vec_cpu::Vector{Float64}            # (B,)      - for transfer view on CPU
+#     E_locs::BAF             # (B,)      - calculated local energies, and GPU -> CPU usage
+#     accepted::Vector{Bool}              # (B,)      - boolean vector accept/reject
+#     # total_buf::Vector{Float64}          # (total,)  - helper for CTMC Proposal buffer
+#     block_idx::Int                      # keeps track of what iteration block I am in
+#     k_prop_buf::BAI
+#     k_prop_cpu::Vector{Int32}
+#     E_mean::BAF
+#     variance::BAF
+#     weights::BAF
+#     local_addrs::Vector{Vector{A}}       # (B,) - per-walker offdiagonal address scratch
+#     local_Hmn::Vector{Vector{Float32}}   # (B,) - per-walker offdiagonal H_mn scratch
+#     offdiag_counts::Vector{Int}          # (B,) - per-walker offdiagonal count   weights::BAF
+# end
+# function VMCBuffer(ansatz, addr)
+#     batch = ansatz.model.batch
+#     model_z = last(ansatz.model.layers).z
+#     out_dim = size(model_z, 1)
+#     A = typeof(addr)
+#     T = eltype(model_z)
+#     backend = KernelAbstractions.get_backend(model_z)
+#
+#     start = false
+#
+#     local_addrs = [Vector{A}() for _ in 1:batch]
+#     local_Hmn   = [Vector{Float32}() for _ in 1:batch]
+#     offdiag_counts = Vector{Int}(undef, batch)
+#
+#     addrs_m = Vector{A}(undef, batch)
+#     flat_addrs_m = Vector{A}(undef, 0)
+#     flat_vals_m = GPUGrowBuffer(backend, T, out_dim, batch)
+#     flat_offdiag_ham = Vector{T}(undef, 0)
+#     flat_offdiag_ham_gpu = GPUGrowBuffer(backend, T, 1, batch)
+#     diag_ham = Vector{T}(undef, batch)
+#     diag_ham_gpu = KernelAbstractions.allocate(backend, T, batch)
+#     offset = Vector{Int32}(undef, batch+1)
+#     offset_gpu = KernelAbstractions.allocate(backend, Int32, batch+1)
+#     # vals_n_cpu = Matrix{T}(undef, out_dim, batch)
+#     # vec_cpu = Vector{T}(undef, batch)
+#     E_locs = KernelAbstractions.allocate(backend, T, batch)
+#     accepted = Vector{Bool}(undef, batch)
+#     k_prop_buf = KernelAbstractions.allocate(backend, Int32, batch)
+#     k_prop_cpu = Vector{Int32}(undef, batch)
+#     E_mean = KernelAbstractions.allocate(backend, T, 1)
+#     variance = KernelAbstractions.allocate(backend, T, 1)
+#     weights = KernelAbstractions.allocate(backend, T, batch)
+#     # total_buf = Vector{T}(undef, 0)
+#     VA = typeof(addrs_m)
+#     BAF = typeof(diag_ham_gpu)
+#     BAI = typeof(offset_gpu)
+#     G = typeof(flat_vals_m)
+#     return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, 
+#                     flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offset, offset_gpu, 
+#                     E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights,
+#                     local_addrs, local_Hmn, offdiag_counts)
+# end
+
 mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer, 
                          BAI <: AbstractArray{Int32}, BAF <: AbstractArray{Float32}}
     addrs_m::VA                         # (B,)      - spawned and chosen addresses
+    new_addrs_n::VA                     # (B,)      - reshuffled starting addresses
     flat_addrs_m::VA                    # (total,)  - all spawned addresses
-    flat_vals_m::G        # (total*out_dim,) - outputs NN(flat_addrs_m)
-    flat_offdiag_ham::Vector{Float64}   # (total,)  - H_mn values for all spawned addresses
-    flat_offdiag_ham_gpu::G   # (total,)  - H_mn values for all spawned addresses
-    diag_ham::Vector{Float64}           # (B,)      - H_nn values
-    diag_ham_gpu::BAF          # (B,)      - H_nn values
-    start::Bool                         # when to start E_loc calculations (after termalisation)
-    offsets::Vector{Int32}                # (B+1,)    - number of offdiagonals from each spawning address
-    offsets_gpu::BAI                # (B+1,)    - number of offdiagonals from each spawning address
-    # vals_n_cpu::Matrix{Float64}         # (1, B)    - for transfer GPU -> CPU
-    # vec_cpu::Vector{Float64}            # (B,)      - for transfer view on CPU
-    E_locs::BAF             # (B,)      - calculated local energies, and GPU -> CPU usage
-    accepted::Vector{Bool}              # (B,)      - boolean vector accept/reject
-    # total_buf::Vector{Float64}          # (total,)  - helper for CTMC Proposal buffer
-    block_idx::Int                      # keeps track of what iteration block I am in
+    flat_vals_m::G                      # (total*out_dim,) - outputs NN(flat_addrs_m)
+    flat_offdiag_ham::Vector{Float32}   # (total,)  - H_mn values for all spawned addresses
+    flat_offdiag_ham_gpu::G             # (total,)  - H_mn values for all spawned addresses
+    diag_ham::Vector{Float32}           # (B,)      - H_nn values (reshuffled)
+    diag_ham_gpu::BAF                   # (B,)      - H_nn values
+    start::Bool                         # when to start E_loc calculations (after thermalisation)
+    offsets::Vector{Int32}              # (B+1,)    - offsets, in reshuffled order
+    offsets_gpu::BAI
+    E_locs::BAF
+    accepted::Vector{Bool}
+    block_idx::Int
     k_prop_buf::BAI
     k_prop_cpu::Vector{Int32}
     E_mean::BAF
     variance::BAF
     weights::BAF
+    local_addrs::Vector{Vector{A}}       # (B,) per-walker offdiagonal address scratch
+    local_Hmn::Vector{Vector{Float32}}   # (B,) per-walker offdiagonal H_mn scratch
+    spinlock::Base.Threads.SpinLock      # protects the shared append!/push! section
 end
+
 function VMCBuffer(ansatz, addr)
     batch = ansatz.model.batch
     model_z = last(ansatz.model.layers).z
@@ -53,32 +125,45 @@ function VMCBuffer(ansatz, addr)
     backend = KernelAbstractions.get_backend(model_z)
 
     start = false
-    addrs_m = Vector{A}(undef, batch)
+
+    addrs_m      = Vector{A}(undef, batch)
+    new_addrs_n  = Vector{A}()
     flat_addrs_m = Vector{A}(undef, 0)
-    flat_vals_m = GPUGrowBuffer(backend, T, out_dim, batch)
+    flat_vals_m  = GPUGrowBuffer(backend, T, out_dim, batch)
     flat_offdiag_ham = Vector{T}(undef, 0)
     flat_offdiag_ham_gpu = GPUGrowBuffer(backend, T, 1, batch)
-    diag_ham = Vector{T}(undef, batch)
+    diag_ham     = Vector{T}(undef, 0)      # will be filled via push! in reshuffled order — start empty
     diag_ham_gpu = KernelAbstractions.allocate(backend, T, batch)
-    offset = Vector{Int32}(undef, batch+1)
-    offset_gpu = KernelAbstractions.allocate(backend, Int32, batch+1)
-    # vals_n_cpu = Matrix{T}(undef, out_dim, batch)
-    # vec_cpu = Vector{T}(undef, batch)
-    E_locs = KernelAbstractions.allocate(backend, T, batch)
-    accepted = Vector{Bool}(undef, batch)
-    k_prop_buf = KernelAbstractions.allocate(backend, Int32, batch)
-    k_prop_cpu = Vector{Int32}(undef, batch)
-    E_mean = KernelAbstractions.allocate(backend, T, 1)
-    variance = KernelAbstractions.allocate(backend, T, 1)
-    weights = KernelAbstractions.allocate(backend, T, batch)
-    # total_buf = Vector{T}(undef, 0)
+    offsets      = Vector{Int32}(undef, 0)  # will be filled via push! — start empty
+    offset_gpu   = KernelAbstractions.allocate(backend, Int32, batch+1)
+    E_locs       = KernelAbstractions.allocate(backend, T, batch)
+    accepted     = Vector{Bool}(undef, batch)
+    k_prop_buf   = KernelAbstractions.allocate(backend, Int32, batch)
+    k_prop_cpu   = Vector{Int32}(undef, batch)
+    E_mean       = KernelAbstractions.allocate(backend, T, 1)
+    variance     = KernelAbstractions.allocate(backend, T, 1)
+    weights      = KernelAbstractions.allocate(backend, T, batch)
+
+    local_addrs = [Vector{A}() for _ in 1:batch]
+    local_Hmn   = [Vector{Float32}() for _ in 1:batch]
+    spinlock    = Base.Threads.SpinLock()
+
+    # pre-size AFTER all referenced vectors exist
+    sizehint!(new_addrs_n, batch)
+    sizehint!(diag_ham, batch)
+    sizehint!(offsets, batch + 1)
+    sizehint!(flat_addrs_m, batch * 20)        # tune based on typical total offdiagonal count
+    sizehint!(flat_offdiag_ham, batch * 20)
+
     VA = typeof(addrs_m)
     BAF = typeof(diag_ham_gpu)
     BAI = typeof(offset_gpu)
     G = typeof(flat_vals_m)
-    return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, 
-                    flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offset, offset_gpu, 
-                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights)
+
+    return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, new_addrs_n, flat_addrs_m, flat_vals_m, flat_offdiag_ham,
+                    flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offsets, offset_gpu,
+                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights,
+                    local_addrs, local_Hmn, spinlock)
 end
 
 # @kernel function _state_proposal_kernel!(addrs_m, offsets, addrs_m_all, distro, rand_vals)
