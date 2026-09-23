@@ -189,11 +189,12 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
 end
 
 """
-    prepare_input!(ansatz, addr, x_cpu_buffer) -> ansatz.x_cpu_buffer
+    prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer) -> x_cpu_buffer
+    prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer) -> x_cpu_buffer
 
-Converts Rimu input notation `addr` into Array{Float32} as input for Neural Network
-`ansatz.x_cpu_buffer`. It uses `Rimu.onr()` function for collecting the 
-occupation number configurations. It manages all batch sizes.
+Fill `x_cpu_buffer` of shape same as `x` in [`Chain`](@ref) (each architecture has its own
+input dimensions) with the scaled occupation numbers `onr(addr)`. A single `addr` is written 
+into every batch column; a vector `addrs` fills one column per address.
 """
 function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
     buf = _flat(x_cpu_buffer)
