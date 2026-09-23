@@ -1,5 +1,32 @@
 
 """
+    AbstractLayer
+
+Abstract type for different types of neural network layer architectures.
+"""
+abstract type AbstractLayer end
+
+"""
+    ParametricLayer
+
+This type of [`AbstractLayer`](@ref) is meant for neural network layer
+which contain learnable parameters, for example [`Dense`](@ref) or 
+[`Conv`](@ref).
+"""
+abstract type ParametricLayer <: AbstractLayer end # has W, b, (layer_norm)
+
+"""
+    FreeLayer
+
+This type of [`AbstractLayer`](@ref) is meant for neural network layer
+which DOES NOT contain learnable parameters, for example [`Pool`](@ref).
+Such layers are usually meant only for some dimension reduction or special
+operations rather than for neural network training.
+"""
+abstract type FreeLayer <: AbstractLayer end # no parameters
+
+
+"""
     _init_std(T, in, out, act)
 
 This function do weights initialisation in neural network layers. There are

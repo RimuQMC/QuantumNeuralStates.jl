@@ -1,4 +1,13 @@
 
+
+
+chain_signature(chain) = join(map(_signature, chain.layers), " | ")
+
+function _write_architecture(io, chain)
+    println(io, "Architecture:")
+    println(io, chain_signature(chain))
+end
+
 """
     _write_weights(io, θ)
 
@@ -120,11 +129,13 @@ Master function, that saves all important Neural Network configurations.
 function save_master(filename::String, θ::AbstractVector, addrs::Vector, ansatz;
                              num_width::Int=3)
     open(filename, "w") do io
+        _write_architecture(io, ansatz.model)
+        println(io)
         _write_input_scale(io, ansatz)
         println(io)
         _write_weights(io, θ)
-        println(io)
-        _write_layernorm_flag(io, ansatz.model)
+        # println(io)
+        # _write_layernorm_flag(io, ansatz.model)
         println(io)
         _write_addrs(io, addrs; num_width)
     end
@@ -151,15 +162,23 @@ If only one column was saved, `vec(x)` is called to get a flat vector.
 function load_master(ansatz, filename::String)
     lines = readlines(filename)
     # find the data lines by looking for the section headers
+    arch_idx = findfirst(==("Architecture:"), lines)
     sc_idx= findfirst(==("Input Scaling:"), lines)
     w_idx = findfirst(==("Weights:"), lines)
-    ln_idx = findfirst(==("LayerNorm:"), lines)
+    # ln_idx = findfirst(==("LayerNorm:"), lines)
     i_idx = findfirst(==("Inputs:"),  lines)
-    @assert sc_idx!== nothing "Missing 'Input Scaling:' header"
+    @assert arch_idx !== nothing "Missing 'Architecture:' header"
+    @assert sc_idx !== nothing "Missing 'Input Scaling:' header"
     @assert w_idx !== nothing "Missing 'Weights:' header"
     @assert i_idx !== nothing "Missing 'Inputs:' header"
 
-    # --- line 1: scaling ----------
+    # --- architecture check ---
+    saved_arch   = lines[arch_idx + 1]
+    current_arch = chain_signature(ansatz.model)
+    saved_arch == current_arch ||
+        error("Architecture mismatch.\n  saved:   $saved_arch\n  current: $current_arch")
+
+    # --- scaling ---
     saved_scale_name    = Symbol(parse_kv(lines[sc_idx + 1]))         # :log1p
     saved_max_norm      = let s = parse_kv(lines[sc_idx + 2])         # "255" or "nothing"
         s == "nothing" ? nothing : parse(Int, s)
@@ -185,11 +204,11 @@ function load_master(ansatz, filename::String)
     # --- line 2: weights ---
     θ_cpu = parse.(Float32, split(weights_line))
 
-    # --- line 2.5: layer normalisation flags ---
-    saved_ln_flags = parse.(Bool, split(lines[ln_idx + 1]))
-    current_ln_flags = [layer.layer_norm !== nothing for layer in ansatz.model.layers]
-    @assert saved_ln_flags == current_ln_flags "LayerNorm configuration mismatch: saved=$saved_ln_flags, " * 
-        "current=$current_ln_flags"
+    # # --- line 2.5: layer normalisation flags ---
+    # saved_ln_flags = parse.(Bool, split(lines[ln_idx + 1]))
+    # current_ln_flags = [layer.layer_norm !== nothing for layer in ansatz.model.layers]
+    # @assert saved_ln_flags == current_ln_flags "LayerNorm configuration mismatch: saved=$saved_ln_flags, " * 
+    #     "current=$current_ln_flags"
 
     # --- line 3: inputs (columns separated by ", ") ---
     col_strs = split(inputs_line, ", ")
@@ -198,53 +217,92 @@ function load_master(ansatz, filename::String)
     @assert all(length(c) == length(cols[1]) for c in cols) "Input columns have inconsistent lengths"
     x = reduce(hcat, cols)   # Matrix{Int} of size (input_dim, batch)
 
-    rs     = ()
-    offset = 0
+    # rs     = ()
+    # offset = 0
+    # for layer in ansatz.model.layers
+    #     nW = length(layer.W)
+    #     nb = length(layer.b)
+    #     if layer.layer_norm !== nothing
+    #         nγ = length(layer.layer_norm.γ)
+    #         nβ = length(layer.layer_norm.β)
+    #         r = LayerRange(
+    #             offset+1          : offset+nW,
+    #             offset+nW+1       : offset+nW+nb,
+    #             offset+nW+nb+1    : offset+nW+nb+nγ,
+    #             offset+nW+nb+nγ+1 : offset+nW+nb+nγ+nβ
+    #         )
+    #         offset += nW + nb + nγ + nβ
+    #     else
+    #         r = LayerRange(offset+1 : offset+nW, offset+nW+1 : offset+nW+nb)
+    #         offset += nW + nb
+    #     end
+    #     rs = (rs..., r)
+    # end
+    # ranges = rs
+    # p      = offset
+    
+    rs = (); offset = 0
     for layer in ansatz.model.layers
-        nW = length(layer.W)
-        nb = length(layer.b)
-        if layer.layer_norm !== nothing
-            nγ = length(layer.layer_norm.γ)
-            nβ = length(layer.layer_norm.β)
-            r = LayerRange(
-                offset+1          : offset+nW,
-                offset+nW+1       : offset+nW+nb,
-                offset+nW+nb+1    : offset+nW+nb+nγ,
-                offset+nW+nb+nγ+1 : offset+nW+nb+nγ+nβ
-            )
-            offset += nW + nb + nγ + nβ
-        else
-            r = LayerRange(offset+1 : offset+nW, offset+nW+1 : offset+nW+nb)
-            offset += nW + nb
+        if !hasparams(layer)                       # Pool, or any future parameter-free layer
+            rs = (rs..., LayerRange((offset+1):offset, (offset+1):offset))
+            continue
         end
-        rs = (rs..., r)
+        nW = length(layer.W); nb = length(layer.b)
+        r_W = (offset+1):(offset+nW); offset += nW
+        r_b = (offset+1):(offset+nb); offset += nb
+        ln = layer.layer_norm
+        if ln !== nothing
+            nγ = length(ln.γ); nβ = length(ln.β)
+            r_γ = (offset+1):(offset+nγ); offset += nγ
+            r_β = (offset+1):(offset+nβ); offset += nβ
+            rs = (rs..., LayerRange(r_W, r_b, r_γ, r_β))
+        else
+            rs = (rs..., LayerRange(r_W, r_b))
+        end
     end
     ranges = rs
-    p      = offset
+    p = offset
 
     @assert length(θ_cpu) == p "Loaded $(length(θ_cpu)) params but model has $p params!"
 
     # --- load weights into chain (CPU or GPU) ---
-    l = first(ansatz.model.layers)
-    θ = similar(l.b, length(θ_cpu))
+    refparam = first(filter(hasparams, ansatz.model.layers))
+    θ = similar(refparam.b, length(θ_cpu))
     copyto!(θ, θ_cpu)
+    # l = first(ansatz.model.layers)
+    # θ = similar(l.b, length(θ_cpu))
+    # copyto!(θ, θ_cpu)
     
     scaling_old = saved_normalisation
     scaling_new = ansatz.normalisation
     ratio = Float32(scaling_old/scaling_new) # scaling = 1/N => inverse ratio
-    for (i, (layer, range)) in enumerate(zip(ansatz.model.layers, ranges))
-        layer.W .= reshape(view(θ, range.W), size(layer.W))
-        layer.b .= view(θ, range.b)
-        if range.γ !== nothing
-            layer.layer_norm.γ .= reshape(view(θ, range.γ), size(layer.layer_norm.γ))
-            layer.layer_norm.β .= reshape(view(θ, range.β), size(layer.layer_norm.β))
+    first_param_seen = false
+    for (layer, r) in zip(ansatz.model.layers, ranges)
+        hasparams(layer) || continue                 # Pool: nothing to load
+        layer.W .= reshape(view(θ, r.W), size(layer.W))
+        layer.b .= view(θ, r.b)
+        if !isnothing(r.γ)
+            layer.layer_norm.γ .= reshape(view(θ, r.γ), size(layer.layer_norm.γ))
+            layer.layer_norm.β .= reshape(view(θ, r.β), size(layer.layer_norm.β))
         end
-        if i == 1
-            # row_sum_W = vec(sum(layer.W, dims=2))
+        if !first_param_seen
             layer.W .*= ratio
-            # layer.b .-= 0.1f0 .* (ratio - 1f0) .* row_sum_W
+            first_param_seen = true
         end
     end
+    # for (i, (layer, range)) in enumerate(zip(ansatz.model.layers, ranges))
+    #     layer.W .= reshape(view(θ, range.W), size(layer.W))
+    #     layer.b .= view(θ, range.b)
+    #     if range.γ !== nothing
+    #         layer.layer_norm.γ .= reshape(view(θ, range.γ), size(layer.layer_norm.γ))
+    #         layer.layer_norm.β .= reshape(view(θ, range.β), size(layer.layer_norm.β))
+    #     end
+    #     if i == 1
+    #         # row_sum_W = vec(sum(layer.W, dims=2))
+    #         layer.W .*= ratio
+    #         # layer.b .-= 0.1f0 .* (ratio - 1f0) .* row_sum_W
+    #     end
+    # end
 
     @info "Weights loaded from $filename ($p parameters, input size $(size(x)))"
     # if size(x, 2) == 1

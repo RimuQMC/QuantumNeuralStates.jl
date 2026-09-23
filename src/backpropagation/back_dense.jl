@@ -16,6 +16,8 @@ function DenseBuffer(layer::Dense)
     return DenseBuffer(δz, δ)
 end
 
+make_buffer(l::Dense, x) = DenseBuffer(l)
+
 
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
     out_dim, in_dim = size(W)

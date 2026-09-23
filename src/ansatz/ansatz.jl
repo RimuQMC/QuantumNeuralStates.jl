@@ -131,7 +131,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
 
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
-    x_cpu_buffer = zeros(Float32, dim, batch_size)
+    x_cpu_buffer = zeros(Float32, size(model.x)[1:end-1]..., batch_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
 
     nn_output = model(x_cpu_buffer)
@@ -196,32 +196,33 @@ Converts Rimu input notation `addr` into Array{Float32} as input for Neural Netw
 occupation number configurations. It manages all batch sizes.
 """
 function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        if na.max_norm === nothing
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) #.+ 0.1f0
-        else
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) .* na.normalisation #.+ 0.1f0
-        end
-        return x_cpu_buffer
+    buf = _flat(x_cpu_buffer)
+    v   = na.input_scale_func.(Float32.(onr(addr)))
+    length(v) == size(buf, 1) ||
+        error("onr(addr) has $(length(v)) entries, model input expects $(size(buf, 1))")
+    if na.max_norm === nothing
+        buf .= v
+    else
+        buf .= v .* na.normalisation
     end
+    return x_cpu_buffer          # original shape, so the GPU copy sees (L..., C_in, batch)
 end
 function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        # Each column is one address from batch 
+    buf = _flat(x_cpu_buffer)
+    @inbounds for i in eachindex(addrs)
+        col = @view buf[:, i]                    # one address per column
         if na.max_norm === nothing
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) #.+ 0.1f0
-            end
+            col .= na.input_scale_func.(Float32.(onr(addrs[i])))
         else
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) .* na.normalisation #.+ 0.1f0 # norm here is 1/norm corrected
-            end
+            col .= na.input_scale_func.(Float32.(onr(addrs[i]))) .* na.normalisation
         end
-        return x_cpu_buffer
     end
+    return x_cpu_buffer
 end
+
+# (in, batch) for Dense, (L*C_in, batch) for Conv; same memory as x_cpu_buffer
+_flat(buf) = reshape(buf, :, size(buf, ndims(buf)))
+
 
 """
     prepare_input_occ!(ansatz, addr, x_cpu_buffer) -> x_cpu_buffer

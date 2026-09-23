@@ -10,11 +10,9 @@ _format_addr
 save_input_scale
 save_addrs
 _run_epoch
-Rimu.Interfaces.deposit!
 _activation_health
 _print_stats
 _ansatz_first_modify!
-Rimu.Interfaces.apply_operator!
 addrs_random
 save_weights
 _ansatz_modify_new!

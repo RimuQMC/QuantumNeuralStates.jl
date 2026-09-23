@@ -126,32 +126,32 @@ methods in Rimu. It applies IS ratio in two steps for batch approaches. Firstly,
 `*1/ψ_source` factor in spawning step. After spawning step all new `target` addresses are known. 
 Secondly, it applies `*ψ_target` factor for `target` and thus compliting the IS ratio.
 """
-function Rimu.Interfaces.apply_operator!( 
-    compression::Rimu.CompressionStrategy,
-    working_memory::Rimu.DictVectors.PDWorkingMemory, target::PDVec, source::PDVec,
-    ham::Rimu.FirstOrderTransitionOperator{<:Any,<:Any,
-         <:Gutzwiller.AnsatzSampling{Adj,<:Any,<:Any,<:NeuralAnsatz,<:Any}}, boost=1,
-) where Adj
-    # 1th iteration - first forward run of NN on source
-    if ham.hamiltonian.ansatz.first_iter == true
-        _ansatz_first_modify!(source, ham.hamiltonian.ansatz)
-    end
-
-    # here ansatz modify walker values after spawning (* 1/ψ_source)
-    stat_names, stats = Rimu.DictVectors.perform_spawns!(working_memory, source, ham, boost)
-    Rimu.DictVectors.collect_local!(working_memory)
-    sync_stat_names, sync_stats = Rimu.DictVectors.synchronize_remote!(working_memory)
-
-    # modify new walkers values with (* ψ_target) -> completing guiding ratio
-    _ansatz_modify_new!(working_memory, ham.hamiltonian.ansatz, Adj)
-
-    target, comp_stat_names, comp_stats = Rimu.DictVectors.move_and_compress!(compression, target, working_memory)
-
-    stat_names = (stat_names..., comp_stat_names..., sync_stat_names...)
-    stats = (stats..., comp_stats..., sync_stats...)
-
-    return stat_names, stats, working_memory, target
-end
+# function Rimu.Interfaces.apply_operator!( 
+#     compression::Rimu.CompressionStrategy,
+#     working_memory::Rimu.DictVectors.PDWorkingMemory, target::PDVec, source::PDVec,
+#     ham::Rimu.FirstOrderTransitionOperator{<:Any,<:Any,
+#          <:Gutzwiller.AnsatzSampling{Adj,<:Any,<:Any,<:NeuralAnsatz,<:Any}}, boost=1,
+# ) where Adj
+#     # 1th iteration - first forward run of NN on source
+#     if ham.hamiltonian.ansatz.first_iter == true
+#         _ansatz_first_modify!(source, ham.hamiltonian.ansatz)
+#     end
+#
+#     # here ansatz modify walker values after spawning (* 1/ψ_source)
+#     stat_names, stats = Rimu.DictVectors.perform_spawns!(working_memory, source, ham, boost)
+#     Rimu.DictVectors.collect_local!(working_memory)
+#     sync_stat_names, sync_stats = Rimu.DictVectors.synchronize_remote!(working_memory)
+#
+#     # modify new walkers values with (* ψ_target) -> completing guiding ratio
+#     _ansatz_modify_new!(working_memory, ham.hamiltonian.ansatz, Adj)
+#
+#     target, comp_stat_names, comp_stats = Rimu.DictVectors.move_and_compress!(compression, target, working_memory)
+#
+#     stat_names = (stat_names..., comp_stat_names..., sync_stat_names...)
+#     stats = (stats..., comp_stats..., sync_stats...)
+#
+#     return stat_names, stats, working_memory, target
+# end
 
 """
     Rimu.DictVectors.deposit!(c, k, val, parent) -> deposit!(c, k, val, p_addr => p_value)
@@ -159,25 +159,25 @@ end
 This is custom dispatch function for calling the NeuralAnsatz Importance Sampling
 methods in Rimu. This affects first stage of applying IS ratio `*1/ψ_source`.
 """
-function Rimu.DictVectors.deposit!(
-        c, k, val, parent::Pair{<:Rimu.Interfaces.AbstractOperatorColumn{<:Any,<:Any,  
-            <:Rimu.FirstOrderTransitionOperator{<:Any,<:Any,
-                    <:Gutzwiller.AnsatzSampling{Adj,<:Any,<:Any,<:NeuralAnsatz,<:Any}}}}
-) where Adj
-
-    ansatz = first(parent).hamiltonian.hamiltonian.ansatz
-    addr = starting_address(first(parent))
-    if !Adj 
-        if ansatz.result_dict[addr] < eps(Float64)
-            val = val / eps(Float64)
-        else
-            val = val / ansatz.result_dict[addr]
-        end
-    else
-        val = val * ansatz.result_dict[addr]
-    end
-
-    return deposit!(c, k, val, addr => last(parent))
-end
-
-
+# function Rimu.DictVectors.deposit!(
+#         c, k, val, parent::Pair{<:Rimu.Interfaces.AbstractOperatorColumn{<:Any,<:Any,  
+#             <:Rimu.FirstOrderTransitionOperator{<:Any,<:Any,
+#                     <:Gutzwiller.AnsatzSampling{Adj,<:Any,<:Any,<:NeuralAnsatz,<:Any}}}}
+# ) where Adj
+#
+#     ansatz = first(parent).hamiltonian.hamiltonian.ansatz
+#     addr = starting_address(first(parent))
+#     if !Adj 
+#         if ansatz.result_dict[addr] < eps(Float64)
+#             val = val / eps(Float64)
+#         else
+#             val = val / ansatz.result_dict[addr]
+#         end
+#     else
+#         val = val * ansatz.result_dict[addr]
+#     end
+#
+#     return deposit!(c, k, val, addr => last(parent))
+# end
+#
+#

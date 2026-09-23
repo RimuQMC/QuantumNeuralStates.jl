@@ -23,7 +23,7 @@ input of activation function
 * `T`: determine precision type. By default `Float32` (recommended for GPU).
 * `ϵ`: stabiliser, prevents zero division.
 """
-mutable struct LayerNorm{T, M <: AbstractMatrix{T}}
+mutable struct LayerNorm{T, M <: AbstractMatrix{T}} <: ParametricLayer
     # -- learnable ----------------------------------------
     γ::M    # (out,1)   scale  — (out,1) broadcasts over batch
     β::M    # (out,1)   shift

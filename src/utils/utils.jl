@@ -24,26 +24,29 @@ const SCALE_FUNCTIONS = Dict(
 Updates all parameters in `chain` given a flat parameter update vector `θ_new` of size (p,).
 
 # Arguments
-
 * `ansatz`: Wave-function ansatz, [`NeuralAnsatz`](@ref). See also [`Chain`](@ref)
-* `jac`: Jacobian buffer which holds `jac.ranges` information about mapping of flatten parameter
+* `jac`: [`JacobianBuffer`](@ref) which holds `jac.ranges` information about mapping of flatten parameter
     vector to each `chain` layer.
 * `θ_new`: flatten parameter vector with new updated weights after optimisation step.
-
 """
 function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
     chain = ansatz.model
     amplitude_output = view(last(chain.layers).z, 1, :)
     ansatz.logψ_centering = maximum(amplitude_output)
-    # println("logψ centering: ", ansatz.logψ_centering)
 
-    for (layer, r) in zip(chain.layers, jac.ranges)
-        layer.W .= reshape(view(θ_new, r.W), size(layer.W))
-        layer.b .= view(θ_new, r.b)
-        if !isnothing(r.γ)
-            layer.layer_norm.γ .= reshape(view(θ_new, r.γ), size(layer.layer_norm.γ))
-            layer.layer_norm.β .= reshape(view(θ_new, r.β), size(layer.layer_norm.β))
-        end
+    map((layer, r) -> _set_params!(layer, θ_new, r), chain.layers, jac.ranges)
+    return nothing
+end
+
+
+_set_params!(::FreeLayer, θ, r) = nothing            # no parameters
+
+function _set_params!(layer::ParametricLayer, θ, r::LayerRange)
+    layer.W .= reshape(view(θ, r.W), size(layer.W))
+    layer.b .= view(θ, r.b)
+    if !isnothing(r.γ)
+        layer.layer_norm.γ .= reshape(view(θ, r.γ), size(layer.layer_norm.γ))
+        layer.layer_norm.β .= reshape(view(θ, r.β), size(layer.layer_norm.β))
     end
     return nothing
 end

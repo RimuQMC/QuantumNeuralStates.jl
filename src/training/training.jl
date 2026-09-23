@@ -52,7 +52,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     end
 
     # --- shared buffers ---------------------------------------------
-    buffers = map(DenseBuffer, ansatz.model.layers)
+    # buffers = map(DenseBuffer, ansatz.model.layers)
+    buffers = make_buffers(ansatz.model)
     jac_buf = JacobianBuffer(ansatz, buffers)
     vmc_buf = VMCBuffer(ansatz, addr)
     n_params = length(jac_buf.θ)
@@ -79,7 +80,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 pidx, length(phases), phase.mode, phase.optimiser, phase.vmc_sampler, phase.max_epochs)
         println(repeat("─", 100))
         @printf("%-6s %-18s %-12s %-12s %-11s %-11s %-9s %-10s\n",
-                "Block", "E_block", "E_err", "Var_block", "|ΔE|", "|Δvar|", "Accept", "η (LR)")
+                "Block", "E", "E_err", "Var", "|ΔE|", "|Δvar|", "Accept", "η (LR)")
         println(repeat("─", 100))
 
         if phase.truncation !== nothing
@@ -97,6 +98,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         epoch       = 0
         converged   = false
         last_accept = NaN
+        phase_block_idx = 1
 
         η          = phase.η
         η_dec_idx  = isempty(phase.η_decrease) ? 0 : 1 # for decrease η criterion
@@ -156,11 +158,13 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                         isnan(diff_var) ? 0.0 : diff_var,
                         last_accept, η)
 
-                if vmc_buf.block_idx >= phase.block_min
+                # if vmc_buf.block_idx >= phase.block_min
+                if phase_block_idx >= phase.block_min
                     converged = check_stop(phase.stop, E_hist, var_hist,
                                            last_accept, phase.patience)
                 end
                 vmc_buf.block_idx += 1
+                phase_block_idx += 1
             end
         end # epoch loop
 

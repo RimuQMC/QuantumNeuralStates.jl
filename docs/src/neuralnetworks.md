@@ -11,8 +11,23 @@ apply_loss_composite!
 
 Chain
 prepare_chain_input!
+
+AbstractLayer
+ParametricLayer
+FreeLayer
+
 Dense
 DenseBuffer
+
+Conv
+ConvBuffer
+PadMode
+NoPad
+Periodic
+Zeros
+
+Pool
+PoolBuffer
 apply_act!
 forward
 LayerNorm

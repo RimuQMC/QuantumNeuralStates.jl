@@ -119,7 +119,7 @@ end
     H = FroehlichPolaron(addr; l=3.0, v=1.155, mode_cutoff=5)
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch) 
 
-    buffers = map(DenseBuffer, model.layers)
+    buffers = make_buffers(ansatz.model)
     jac_buf = JacobianBuffer(ansatz, buffers)
 
     @test_nowarn grads = back_jacobian!(ansatz, jac_buf)

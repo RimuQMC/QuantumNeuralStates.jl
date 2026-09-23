@@ -23,7 +23,7 @@ const tmpdir = mktempdir()
     @testset "Save/Load all at once -> master save/load" begin
         file = joinpath(tmpdir, "all.txt")
         
-        buffers = map(DenseBuffer, ansatz.model.layers)
+        buffers = make_buffers(ansatz.model)
         jac_buf = JacobianBuffer(ansatz, buffers)
         x = prepare_input!(ansatz, addrs_n, ansatz.x_cpu_buffer)
 
@@ -32,7 +32,7 @@ const tmpdir = mktempdir()
         # create new network with new parameters
         model2 = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
         ansatz2 = NeuralAnsatz(LogPsi(), H, model2, batch)
-        buffers2 = map(DenseBuffer, ansatz2.model.layers)
+        buffers2 = make_buffers(ansatz2.model)
         
         x2 = load_master(ansatz2, file)
         jac_buf2 = JacobianBuffer(ansatz2, buffers2)
@@ -67,7 +67,7 @@ end
         @test_nowarn neuron_statistics(ansatz)
     end
     @testset "Jacobian statistics" begin
-        buffers = map(DenseBuffer, ansatz.model.layers)
+        buffers = make_buffers(ansatz.model)
         jac_buf = JacobianBuffer(ansatz, buffers)
         grads_n = back_jacobian!(ansatz, jac_buf)  # do 1 backpropagation pass
         @test_nowarn jacobian_statistics(ansatz, jac_buf.J)

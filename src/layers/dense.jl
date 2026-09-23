@@ -17,7 +17,7 @@ Allocation-free at runtime — all intermediate results are stored in pre-alloca
 # Arguments
 * `in`: input dimension.
 * `out`: output dimension.
-* `act`: activation function — must be registered in `ACT_DERIV` (`activations.jl`).
+* `act`: activation function — must be registered in [`ACT_DERIV`](@ref).
 
 # Keyword Arguments
 * `batch`: batch size.
@@ -39,7 +39,7 @@ layer_ln  = Dense(64, 32, gelu; Layer_Norm=true)
 """
 struct Dense{T,M<:AbstractMatrix{T},V<:AbstractVector{T},F<:Union{Function,Tuple},
                      G<:Union{Function,Tuple},B<:AbstractArray{T},R<:Union{Nothing,Tuple},
-                     LN<:Union{LayerNorm, Nothing}}
+                     LN<:Union{LayerNorm, Nothing}} <: ParametricLayer
     W::M
     b::V
     act_func::F
@@ -70,6 +70,10 @@ function Dense(in::Int, out::Int, acts::NTuple{N,Function};
     M, V, F, G, B, R, LN = typeof(W), typeof(b), typeof(acts), typeof(act_ds), typeof(z), typeof(ranges), typeof(layer_norm)
     return Dense{T,M,V,F,G,B,R,LN}(W, b, acts, act_ds, a, z, ranges, layer_norm)
 end
+
+_signature(l::Dense) =
+    "Dense($(size(l.W,2))=>$(size(l.W,1)),$(nameof(l.act_func)),LN=$(l.layer_norm !== nothing))"
+
 
 """
     apply_act!(layer::Dense, a, z)

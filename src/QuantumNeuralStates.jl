@@ -24,8 +24,12 @@ include("./activations.jl")
 include("./layers/layers_helpers.jl")
 include("./layers/layernorm.jl")
 include("./layers/dense.jl")
+include("./layers/conv.jl")
+include("./layers/pool.jl")
 include("./chain.jl")
 include("./backpropagation/back_dense.jl")
+include("./backpropagation/back_conv.jl")
+include("./backpropagation/back_pool.jl")
 include("./backpropagation/backpropagation.jl") # needs to be included as last backpropagation file
 include("./utils/save_load.jl")
 include("./utils/network_health_statistics.jl")
@@ -86,8 +90,9 @@ include("./nn_create.jl")
 export build_model
 
 
-export Dense, Chain
-export DenseBuffer, JacobianBuffer, LayerRange
+export Chain, Dense, Conv, Pool
+export NoPad, Periodic, Zeros # padding structs
+export JacobianBuffer, make_buffers
 export forward, back_jacobian!, update!, addrs_random, final_elocs_statistics!
 export neuron_statistics, jacobian_statistics
 export save_master, load_master, log_markov_chain

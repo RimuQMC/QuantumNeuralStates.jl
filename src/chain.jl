@@ -1,6 +1,22 @@
 # using LinearAlgebra
 # using Statistics
 
+# shape of the chain input, decided by the first layer
+_input_shape(l::Dense, input_size, batch) = (size(l.W, 2), batch)
+
+function _input_shape(l::Conv, input_size, batch)
+    Nsp = ndims(l.W) - 2
+    length(input_size) == Nsp ||
+        error("Conv with $Nsp spatial dims needs input_size of length $Nsp, got $input_size")
+    _check_input(l.pad, input_size, size(l.W)[1:Nsp])                                  # CHANGED
+    return (input_size..., size(l.W, Nsp + 1), batch)
+end
+
+_check_input(::NoPad, input_size, K) =
+    all(input_size .>= K) || error("input_size $input_size is smaller than kernel $K")
+_check_input(::PadMode, input_size, K) = nothing
+
+
 """
     Chain(layers...; device=identity, batch=1)
 
@@ -34,16 +50,15 @@ mutable struct Chain{L<:Tuple,X<:AbstractArray,U<:AbstractArray,F<:Function}
     device::F
     batch::Int
 end
-function Chain(layers...; device::Function = identity, batch::Int = 1)
-    # Define input
-    l      = first(layers)
-    in_dim = size(l.W, 2)
-    x = similar(l.W, in_dim, batch)
+function Chain(layers...; device::Function = identity, batch::Int = 1,
+               input_size::Tuple = ())
+    l = first(layers)
+    x = fill!(similar(l.W, _input_shape(l, input_size, batch)...), 0f0)
 
-    # Define last computed output of NN
-    lout    = last(layers)
-    out_dim = size(lout.z, 1)
-    z_last = similar(lout.z, out_dim, batch)
+    # build the structure: allocates Conv/Pool a and z (Dense already has them)
+    z_out = _forward_layers(layers, x)
+
+    z_last = similar(z_out)
 
     L, X, U, F = typeof(layers), typeof(x), typeof(z_last), typeof(device)
     return Chain{L,X,U,F}(layers, x, z_last, device, batch)
@@ -95,16 +110,28 @@ mutable struct MultiForwardBuffer{L,A,X<:AbstractArray,CX<:AbstractArray,CZ<:Abs
     z_cpu::CZ
 end
 function MultiForwardBuffer(model, addr, buffer_size)
+    # layers = Tuple(
+    #     MultiForwardLayer(
+    #             similar(l.a, size(l.a, 1), buffer_size),
+    #             l.layer_norm !== nothing ? LayerNorm_multiforward(size(l.a, 1), buffer_size, model.device) : nothing
+    #     ) for l in model.layers
+    # )
+    #
+    # x = similar(model.x, size(model.x, 1), buffer_size)
+    #
+    # x_cpu = zeros(Float32, size(model.x, 1), buffer_size)
+    # z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), buffer_size)
+
     layers = Tuple(
         MultiForwardLayer(
-                similar(l.a, size(l.a, 1), buffer_size),
-                l.layer_norm !== nothing ? LayerNorm_multiforward(size(l.a, 1), buffer_size, model.device) : nothing
+            similar(l.z, size(l.z)[1:end-1]..., buffer_size),
+            l isa ParametricLayer && l.layer_norm !== nothing ?
+                LayerNorm_multiforward(size(l.z, ndims(l.z)-1), buffer_size, model.device) : nothing
         ) for l in model.layers
     )
 
-    x = similar(model.x, size(model.x, 1), buffer_size)
-
-    x_cpu = zeros(Float32, size(model.x, 1), buffer_size)
+    x = similar(model.x, size(model.x)[1:end-1]..., buffer_size)
+    x_cpu = zeros(Float32, size(model.x)[1:end-1]..., buffer_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), buffer_size)
 
     addrs = fill(addr, buffer_size)
@@ -142,24 +169,40 @@ this buffer for bigger batch pass.
 """
 function forward(chain::Chain, x::AbstractArray)
     prepare_chain_input!(chain, x)
-    input = chain.x
-
-    for (i, layer) in enumerate(chain.layers)
-        input = forward(layer, input)
-    end
-
-    return input
+    return _forward_layers(chain.layers, chain.x)
 end
+@inline _forward_layers(::Tuple{}, x) = x
+@inline _forward_layers(layers::Tuple, x) =
+    _forward_layers(Base.tail(layers), forward(first(layers), x))
+# function forward(chain::Chain, x::AbstractArray)
+#     prepare_chain_input!(chain, x)
+#     input = chain.x
+#
+#     for (i, layer) in enumerate(chain.layers)
+#         input = forward(layer, input)
+#     end
+#
+#     return input
+# end
+
 function forward(chain::Chain, x::AbstractArray, multi_forward_buffer)
     prepare_chain_input!(chain, x, multi_forward_buffer)
-    input = multi_forward_buffer.x
-
-    for (layerNN, layerMulti) in zip(chain.layers, multi_forward_buffer.layers)
-        input = forward(layerNN, input, layerMulti)
-    end
-
-    return input
+    return _forward_layers(chain.layers, multi_forward_buffer.layers, multi_forward_buffer.x)
 end
+@inline _forward_layers(::Tuple{}, ::Tuple{}, x) = x
+@inline _forward_layers(layers::Tuple, multi::Tuple, x) =
+    _forward_layers(Base.tail(layers), Base.tail(multi),
+                    forward(first(layers), x, first(multi)))
+# function forward(chain::Chain, x::AbstractArray, multi_forward_buffer)
+#     prepare_chain_input!(chain, x, multi_forward_buffer)
+#     input = multi_forward_buffer.x
+#
+#     for (layerNN, layerMulti) in zip(chain.layers, multi_forward_buffer.layers)
+#         input = forward(layerNN, input, layerMulti)
+#     end
+#
+#     return input
+# end
 
 """
     (model)(x)

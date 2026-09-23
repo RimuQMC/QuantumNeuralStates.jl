@@ -34,9 +34,17 @@ M = 10 # number of sites
 # NN Model
 # -------------------------------------------------------------------
 batch  = 1024
+act = relu
+pad = Periodic()
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
-model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; 
-                     batch=batch, device=device, Layer_Norm=true);
+# model  = build_model("FCNN", [M, 100, 100, 100, 1], act; 
+#                      batch=batch, device=device, Layer_Norm=true);
+model  = Chain(Conv((3,), 1=>16, act; batch=batch, device=mtl, pad=pad),
+               Conv((3,), 16=>16, act; batch=batch, device=mtl, pad=pad),
+               Conv((3,), 16=>16, act; batch=batch, device=mtl, pad=pad),
+               Pool(:mean; device=mtl),
+               Dense(16, 1, identity; batch=batch, device=mtl); 
+               batch=batch, device=device, input_size=(M,))
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # ALL VARIABLES
@@ -52,7 +60,7 @@ phases = [
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 500,
+        max_epochs = 50,
     ),
     TrainingPhase(
         mode       = :energy,
@@ -66,20 +74,20 @@ phases = [
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 1000,
+        max_epochs = 50,
     ),
 ]
 
 # RIMU VARIABLES
 addr = near_uniform(BoseFS{N,M});
 H = HubbardReal1D(addr; u=0.1);
-ansatz  = NeuralAnsatz(LogPsi(), H, model, batch); # NN ansatz for wave-function
+ansatz  = NeuralAnsatz(LogPsi(), H, model, batch; multiforward_buffer=batch*32); # NN ansatz for wave-function
 
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
 SAVEFILE     = "./weights/example.txt"
 SAVE_WEIGHTS = true
-LOADFILE     = ""
+LOADFILE     = "./weights/example.txt"
 LOAD_WEIGHTS = false
 MARKOVFILE   = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV  = false

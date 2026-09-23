@@ -54,7 +54,7 @@ end
     H = HubbardReal1D(addr; u=0.1);
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
-    buffers = map(DenseBuffer, ansatz.model.layers)
+    buffers = make_buffers(ansatz.model)
     jac_buf = JacobianBuffer(ansatz, buffers)
     vmc_buf = VMCBuffer(ansatz, addr)
     addrs_n = fill(addr, batch)
