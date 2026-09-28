@@ -269,8 +269,8 @@ using Random
     @testset "LayerNorm" begin
         in_dim, out_dim, batch = 100, 3, 5
         act = tanh
-        layer    = Dense(in_dim=>out_dim, act; batch=batch, Layer_Norm=false)
-        layer_ln = Dense(in_dim=>out_dim, act; batch=batch, Layer_Norm=true)
+        layer    = Dense(in_dim=>out_dim, act; batch=batch, layer_norm=false)
+        layer_ln = Dense(in_dim=>out_dim, act; batch=batch, layer_norm=true)
         x = randn(T, in_dim, batch) .* 3
 
         @testset "forward" begin
