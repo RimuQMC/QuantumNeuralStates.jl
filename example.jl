@@ -9,20 +9,8 @@ using Metal     # device = mtl
 # Choosing what GPU wull be running (if none -> CPU run is chosen)
 # -------------------------------------------------------------------
 # you can manually choose on what device (CPU/GPU) the Neural Network would run
-# but this generally picks the GPU way if kept here
-device = identity
-try
-    CUDA.functional()
-    global device = CUDA.cu
-    @info "CUDA (cu) was loaded for GPU computations"
-catch
-end
-try
-    Metal.functional()
-    global device = Metal.mtl
-    @info "Metal (mtl) was loaded for GPU computations"
-catch
-end
+# but this generally picks the GPU based on what package is loaded
+device = select_device()
 
 # -------------------------------------------------------------------
 # Quantum System
@@ -36,19 +24,17 @@ M = 10 # number of sites
 batch  = 1024
 act = relu
 pad = Periodic()
-# Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
-# model  = build_model("FCNN", [M, 100, 100, 100, 1], act; 
-#                      batch=batch, device=device, Layer_Norm=true);
-model  = Chain(Conv((3,), 1=>16, act; batch=batch, device=mtl, pad=pad),
-               Conv((3,), 16=>16, act; batch=batch, device=mtl, pad=pad),
-               Conv((3,), 16=>16, act; batch=batch, device=mtl, pad=pad),
-               Pool(:mean; device=mtl),
-               Dense(16, 1, identity; batch=batch, device=mtl); 
-               batch=batch, device=device, input_size=(M,))
+model = Chain(Conv((3,), 1=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
+              Pool(:mean; device=device),
+              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              Dense(32=>1, identity; batch=batch, device=device); 
+              batch=batch, device=device, input_size=(10,))
 
-# --------------------------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------
 # ALL VARIABLES
-# --------------------------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------
 phases = [
     TrainingPhase(
         mode       = :energy,
@@ -60,7 +46,7 @@ phases = [
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 50,
+        max_epochs = 500,
     ),
     TrainingPhase(
         mode       = :energy,
@@ -74,23 +60,23 @@ phases = [
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 50,
+        max_epochs = 1000,
     ),
 ]
 
 # RIMU VARIABLES
-addr = near_uniform(BoseFS{N,M});
-H = HubbardReal1D(addr; u=0.1);
-ansatz  = NeuralAnsatz(LogPsi(), H, model, batch; multiforward_buffer=batch*32); # NN ansatz for wave-function
+addr = near_uniform(BoseFS{N,M})
+H = HubbardReal1D(addr; u=0.1)
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch) # NN ansatz for wave-function
 
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE     = "./weights/example.txt"
+SAVEFILE = "./weights/example.txt"
 SAVE_WEIGHTS = true
-LOADFILE     = "./weights/example.txt"
+LOADFILE = ""
 LOAD_WEIGHTS = false
-MARKOVFILE   = "MarkovChain.txt" # saving Markov Chain
-SAVE_MARKOV  = false
+MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
+SAVE_MARKOV = false
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # TRAINING LOOP

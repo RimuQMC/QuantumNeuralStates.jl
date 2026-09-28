@@ -34,6 +34,7 @@ include("./backpropagation/backpropagation.jl") # needs to be included as last b
 include("./utils/save_load.jl")
 include("./utils/network_health_statistics.jl")
 include("./utils/utils.jl")
+include("./utils/io.jl")
 
 # Dispatch functions for Importance Sampling in Rimu
 import Rimu.DictVectors: deposit!   
@@ -92,13 +93,14 @@ export build_model
 
 export Chain, Dense, Conv, Pool
 export NoPad, Periodic, Zeros # padding structs
-export JacobianBuffer, make_buffers
+export JacobianBuffer, make_buffers, back_jacobian!, back!
 export forward, back_jacobian!, update!, addrs_random, final_elocs_statistics!
 export neuron_statistics, jacobian_statistics
 export save_master, load_master, log_markov_chain
+export memory_estimate, select_device
 
-export tanh, relu, sigmoid, gelu, tanh_fast, sigmoid_fast, identity
-export tanh_deriv, relu_deriv, sigmoid_deriv, identity_deriv, tanh_fast_deriv, sigmoid_fast_deriv, gelu_deriv
+export tanh, relu, sigmoid, gelu, tanh_fast, sigmoid_fast, identity, gelu_fast
+export tanh_deriv, relu_deriv, sigmoid_deriv, identity_deriv, tanh_fast_deriv, sigmoid_fast_deriv, gelu_deriv, gelu_fast_deriv
 
 
 end

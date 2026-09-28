@@ -41,7 +41,14 @@ end
     N = 5 # number of particles
     M = 5 # number of sites
     batch  = 10
-    model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch)
+
+    conv1 = Conv((3,), 1=>8, relu; batch=batch, pad=Periodic())
+    conv2 = Conv((3,), 8=>8, gelu; batch=batch, pad=Periodic())
+    pool  = Pool(:mean)
+    dense = Dense(8=>8, tanh; batch=batch)
+    dense = Dense(8=>1, identity; batch=batch)
+    model = Chain(conv1, conv2, pool, dense; batch=batch, input_size=(M,))
+
     phases = [
         TrainingPhase(
             mode       = :energy,

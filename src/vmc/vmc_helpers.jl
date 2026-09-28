@@ -57,6 +57,8 @@ function VMCBuffer(ansatz, addr)
     return VMCBuffer{A, VA}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, diag_ham,
                     start, walker_idx, offset, vals_n_cpu, vec_cpu, E_locs, accepted, total_buf, 1)
 end
+Base.show(io::IO, ::MIME"text/plain", ::VMCBuffer) = print(io, "VMCBuffer")
+
 
 """
     _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)

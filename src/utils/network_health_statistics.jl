@@ -19,7 +19,7 @@ end
 
 Prints into chosen `io` information about pre-activation and post-activation health in Neural Network (NN).
 """
-function _activation_health(a::AbstractMatrix, z::AbstractMatrix, act; sat_thresh=0.95, io=stdout)
+function _activation_health(a, z, act; sat_thresh=0.95, io=stdout)
     n_total = length(a)
 
     if act === tanh || act === tanh_fast
@@ -28,9 +28,19 @@ function _activation_health(a::AbstractMatrix, z::AbstractMatrix, act; sat_thres
         frac_sat  = n_sat / n_total
         frac_lin  = n_lin / n_total
         @printf(io, "   %-14s |z|>%.2f : %6.2f%%  (%d / %d)\n",
-                "saturation", sat_thresh, 100*frac_sat, n_sat, n_total)
+                "saturation (Tanh)  ", sat_thresh, 100*frac_sat, n_sat, n_total)
         @printf(io, "   %-14s |a|<0.10 : %6.2f%%  (%d / %d)   [near-linear regime]\n",
-                "under-driven", 100*frac_lin, n_lin, n_total)
+                "under-driven (Tanh)", 100*frac_lin, n_lin, n_total)
+
+    elseif act === sigmoid || act === sigmoid_fast
+        n_sat     = Int(sum(abs.(2 .* z .- 1) .> Float32(sat_thresh)))   # z near 0 or 1, GPU-safe
+        n_lin     = Int(sum(abs.(a) .< Float32(0.1)))
+        frac_sat  = n_sat / n_total
+        frac_lin  = n_lin / n_total
+        @printf(io, "   %-14s |2z-1|>%.2f : %6.2f%%  (%d / %d)\n",
+                "saturation (Sigmoid)  ", sat_thresh, 100*frac_sat, n_sat, n_total)
+        @printf(io, "   %-14s |a|<0.10    : %6.2f%%  (%d / %d)   [near-linear regime]\n",
+                "under-driven (Sigmoid)", 100*frac_lin, n_lin, n_total)
 
     elseif act === relu
         n_dead    = Int(sum(a .<= 0))
@@ -44,11 +54,11 @@ function _activation_health(a::AbstractMatrix, z::AbstractMatrix, act; sat_thres
         @printf(io, "   %-14s always-dead : %6.2f%%  (%d / %d neurons dead for ENTIRE batch)\n",
                 "dead (ReLU)", 100*n_always_dead/n_neurons, n_always_dead, n_neurons)
 
-    elseif act === gelu
+    elseif act === gelu || act === gelu_fast
         n_starved    = Int(sum(a .< -3.0))
         frac_starved = n_starved / n_total
         @printf(io, "   %-14s z < -3.0 : %6.2f%%  (%d / %d)  [gradient-starved tail]\n",
-                "starved (GELU)", 100*frac_starved, n_starved, n_total)
+                "starved (GeLU)", 100*frac_starved, n_starved, n_total)
     else
         @printf(io, "   %-14s (no specific health check for act=%s)\n", "health", act)
     end
@@ -79,18 +89,18 @@ end
 function neuron_statistics(ansatz, io; sat_thresh=0.95, idx::Int=0)
     println(io)
     println(io, "$(idx) "*"="^90)
-    println(io, "  Input  ($(size(ansatz.x_cpu_buffer, 1)))")
+    println(io, "  Input  ($(size(ansatz.x_cpu_buffer)))")
     println(io, "  "*"─"^90)
     _print_stats("  input", ansatz.x_cpu_buffer; io=io)
 
     for (li, layer) in enumerate(ansatz.model.layers)
-        if isa(layer, Dense)
+        if layer isa Dense
             W = layer.W
             b = layer.b
             act = layer.act_func
 
             println(io, "  "*"─"^90)
-            println(io, "  Layer $li  ($(size(W,2)) -> $(size(W,1)),  act=$act)")
+            println(io, "  Layer $li  Dense($(size(W,2))=>$(size(W,1)),  act=$act)")
             println(io, "  "*"─"^90)
 
             _print_stats(" W", W; io=io)
@@ -104,8 +114,40 @@ function neuron_statistics(ansatz, io; sat_thresh=0.95, idx::Int=0)
 
             _activation_health(a, z, act; sat_thresh=sat_thresh, io=io)
 
+        elseif layer isa Conv
+            W = layer.W
+            b = layer.b
+            act = layer.act_func
+            a = layer.a
+            z = layer.z
+            nW, N = ndims(W), ndims(a)
+            C, B  = size(a, N-1), size(a, N)
+
+            println(io, "  "*"─"^90)
+            println(io, "  Layer $li  Conv($(size(W)[1:nW-2]), $(size(W,nW-1))=>$(size(W,nW)),  act=$act,",
+                        "  pad=$(nameof(typeof(layer.pad))),  out=$(size(a)[1:N-2]))")
+            println(io, "  "*"─"^90)
+
+            _print_stats(" W", W; io=io)
+            _print_stats(" b", b; io=io)
+            _print_stats(" a (pre-act)", a; io=io)
+            _print_stats(" z (post-act)", z; io=io)
+
+            # (L..., C, B) -> (L*C, B) so the Dense-style health check applies per (site, channel)
+            _activation_health(reshape(a, :, B), reshape(z, :, B), act; sat_thresh=sat_thresh, io=io)
+
+        elseif layer isa Pool
+            x = something(ansatz.model.layers[li-1].z)   # pool input (L..., C, B)
+            z = something(layer.z)                       # (C, B)
+
+            println(io, "  "*"─"^90)
+            println(io, "  Layer $li  Pool($(typeof(layer.op).parameters[1]))  ",
+                    "$(size(x)) → $(size(z))")
+            println(io, "  "*"─"^90)
+
+            _print_stats(" z (pooled)", z; io=io)
         else
-            error("Unknown layer type: $layer!")
+            error("Unknown layer type: $layer !")
         end
     end
     println(io, "  "*"="^90)

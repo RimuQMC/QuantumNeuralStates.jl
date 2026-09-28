@@ -52,11 +52,27 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     end
 
     # --- shared buffers ---------------------------------------------
-    # buffers = map(DenseBuffer, ansatz.model.layers)
     buffers = make_buffers(ansatz.model)
     jac_buf = JacobianBuffer(ansatz, buffers)
     vmc_buf = VMCBuffer(ansatz, addr)
     n_params = length(jac_buf.θ)
+    @info "Neural Network parameters: $(n_params)"
+
+    total = memory_estimate((ansatz, buffers, jac_buf, vmc_buf))
+    @info "Total memory estimate: $(_fmt_bytes(total))"
+
+    # this is for more detailed memory print 
+    # parts = ("ansatz"   => ansatz,
+    #      "backprop" => buffers,
+    #      "jacobian" => jac_buf,
+    #      "vmc"      => vmc_buf)
+    #
+    # println("----- Memory estimate -----")
+    # for (name, obj) in parts
+    #     println("  ", rpad(name * ":", 10), _fmt_bytes(memory_estimate(obj)))
+    # end
+    # println("  ", rpad("total:", 10), _fmt_bytes(sum(memory_estimate ∘ last, parts)))
+    # println("---------------------------")
 
     all_E     = Float64[]
     all_E_err = Float64[]

@@ -38,9 +38,14 @@ function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
     return nothing
 end
 
+"""
+    _set_params!(layer, θ, r::LayerRange)
 
+Copy `layer`'s slice of the flat parameter vector `θ` (given by `r`) into
+`layer.W`/`layer.b` (and `layer.layer_norm.γ`/`β` if present). No-op for
+`FreeLayer`s (no parameters). Used by [`update!`](@ref).
+"""
 _set_params!(::FreeLayer, θ, r) = nothing            # no parameters
-
 function _set_params!(layer::ParametricLayer, θ, r::LayerRange)
     layer.W .= reshape(view(θ, r.W), size(layer.W))
     layer.b .= view(θ, r.b)
@@ -143,4 +148,24 @@ how close I want to be careful around zero and return safe value.
 @inline function safe_denom(x::T, epsilon::T) where T
     ax = abs(x)
     return ax < epsilon ? copysign(epsilon, x) : x
+end
+
+"""
+    select_device()
+
+This function check what GPU package was used in script, and return its
+GPU() function (`mtl()` - Metal, `cu()` - CUDA). If no GPU backend was 
+loaded it returns `identity()` - CPU.
+"""
+function select_device()
+    if isdefined(Main, :CUDA) && Main.CUDA.functional()
+        @info "CUDA (cu) was loaded for GPU computations"
+        return Main.CUDA.cu
+    elseif isdefined(Main, :Metal) && Main.Metal.functional()
+        @info "Metal (mtl) was loaded for GPU computations"
+        return Main.Metal.mtl
+    else
+        @info "No functional GPU backend found, using CPU"
+        return identity
+    end
 end

@@ -15,10 +15,17 @@ function DenseBuffer(layer::Dense)
     δ  = similar(layer.W, in_dim, batch)
     return DenseBuffer(δz, δ)
 end
+Base.show(io::IO, ::MIME"text/plain", ::DenseBuffer) = print(io, "DenseBuffer")
 
 make_buffer(l::Dense, x) = DenseBuffer(l)
 
+"""
+    _fill_JW_Jb!(J_W, J_b, W, δz, x)
 
+This function is specifically used in backpropagation with [`Dense`](@ref) type of layers.
+It fills [`JacobianBuffer`](@ref) per layer derivatives `J_W` and `J_b`.
+This function is called inside [`back!`](@ref) function.
+"""
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
     out_dim, in_dim = size(W)
     batch   = size(δz, 2)
@@ -26,11 +33,6 @@ make_buffer(l::Dense, x) = DenseBuffer(l)
     J_b .= δz
 end
 
-
-function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,Nothing,LN}, a) where {T,M,V,F,G,B,LN}
-    δz .= layer.act_deriv.(a)
-    return δz
-end
 function apply_act_deriv!(δz, layer::Dense{T,M,V,F,G,B,R,LN}, a) where {T,M,V,F,G,B,R<:Tuple,LN}
     map(layer.act_deriv, layer.act_ranges) do f, r
         @views δz[r,:] .= f.(a[r,:])

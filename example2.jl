@@ -9,20 +9,8 @@ using Metal     # device = mtl
 # Choosing what GPU wull be running (if none -> CPU run is chosen)
 # -------------------------------------------------------------------
 # you can manually choose on what device (CPU/GPU) the Neural Network would run
-# but this generally picks the GPU way if kept here
-device = identity
-try
-    CUDA.functional()
-    global device = CUDA.cu
-    @info "CUDA (cu) was loaded for GPU computations"
-catch
-end
-try
-    Metal.functional()
-    global device = Metal.mtl
-    @info "Metal (mtl) was loaded for GPU computations"
-catch
-end
+# but this generally picks the GPU based on what package is loaded
+device = select_device()
 
 # -------------------------------------------------------------------
 # Quantum System
@@ -36,11 +24,11 @@ M = 10 # number of sites
 batch  = 1024
 # Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
 act = tanh_fast
-model = Chain(Dense(M, 200, act; batch=batch, device=device, Layer_Norm=true),
-              Dense(200, 200, act; batch=batch, device=device, Layer_Norm=true),
-              Dense(200, 200, act; batch=batch, device=device, Layer_Norm=true),
-              Dense(200, 2, (identity, act); batch=batch, device=device); 
-              device=device, batch=batch)
+model = Chain(Dense(M=>200, act; batch=batch, device=device, layer_norm=true),
+              Dense(200=>200, act; batch=batch, device=device, layer_norm=true),
+              Dense(200=>200, act; batch=batch, device=device, layer_norm=true),
+              Dense(200=>2, (identity, act); batch=batch, device=device); 
+              device=device, batch=batch, input_size=(M,))
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # ALL VARIABLES

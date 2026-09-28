@@ -18,7 +18,7 @@ _check_input(::PadMode, input_size, K) = nothing
 
 
 """
-    Chain(layers...; device=identity, batch=1)
+    Chain(layers...; device=identity, batch=1, input_size=())
 
 A Neural Network (NN) container that chains layers into a single forward-pass model. This
 design is inspired by `Flux.jl` notation (general ML julia library).
@@ -30,6 +30,8 @@ design is inspired by `Flux.jl` notation (general ML julia library).
 # Keyword Arguments
 * `device`: function which determine if the NN lives and computes on CPU or GPU
 * `batch`: determine what is the batch size.
+* `input_size`: Tuple specifying input dimensions. Needed for layers independent
+    of input size (as [`Conv`](@ref)) for buffer initialisations.
 
 # Example
 ```julia
@@ -55,13 +57,34 @@ function Chain(layers...; device::Function = identity, batch::Int = 1,
     l = first(layers)
     x = fill!(similar(l.W, _input_shape(l, input_size, batch)...), 0f0)
 
-    # build the structure: allocates Conv/Pool a and z (Dense already has them)
-    z_out = _forward_layers(layers, x)
+    z_out = _forward_layers(layers, x) # forward pass for all layers initialisation
 
     z_last = similar(z_out)
 
     L, X, U, F = typeof(layers), typeof(x), typeof(z_last), typeof(device)
     return Chain{L,X,U,F}(layers, x, z_last, device, batch)
+end
+
+Base.show(io::IO, c::Chain) =
+    print(io, "Chain(", length(c.layers), " layers, ", _group(n_params(c)), " params)")
+
+function Base.show(io::IO, ::MIME"text/plain", c::Chain)
+    lines = [sprint(show, l) * "," for l in c.layers]
+    ptxt  = [n_params(l) == 0 ? "" : _group(n_params(l)) * " params" for l in c.layers]
+    wl    = maximum(length, lines)
+
+    println(io, "Chain(")
+    for i in eachindex(c.layers)
+        print(io, "  ", rpad(lines[i], wl))
+        isempty(ptxt[i]) || print(io, "  # ", ptxt[i])
+        println(io)
+    end
+    println(io, ")")
+
+    println(io, "  input: ", size(c.x), ", batch: ", c.batch, ", device: ",
+                _devname(c.device), " (", eltype(c.x), ")")
+    println(io, "  parameters: ", _group(n_params(c)))
+    print(io,   "  memory estimate: ", _fmt_bytes(memory_estimate(c)))
 end
 
 """
@@ -110,18 +133,6 @@ mutable struct MultiForwardBuffer{L,A,X<:AbstractArray,CX<:AbstractArray,CZ<:Abs
     z_cpu::CZ
 end
 function MultiForwardBuffer(model, addr, buffer_size)
-    # layers = Tuple(
-    #     MultiForwardLayer(
-    #             similar(l.a, size(l.a, 1), buffer_size),
-    #             l.layer_norm !== nothing ? LayerNorm_multiforward(size(l.a, 1), buffer_size, model.device) : nothing
-    #     ) for l in model.layers
-    # )
-    #
-    # x = similar(model.x, size(model.x, 1), buffer_size)
-    #
-    # x_cpu = zeros(Float32, size(model.x, 1), buffer_size)
-    # z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), buffer_size)
-
     layers = Tuple(
         MultiForwardLayer(
             similar(l.z, size(l.z)[1:end-1]..., buffer_size),
@@ -174,16 +185,6 @@ end
 @inline _forward_layers(::Tuple{}, x) = x
 @inline _forward_layers(layers::Tuple, x) =
     _forward_layers(Base.tail(layers), forward(first(layers), x))
-# function forward(chain::Chain, x::AbstractArray)
-#     prepare_chain_input!(chain, x)
-#     input = chain.x
-#
-#     for (i, layer) in enumerate(chain.layers)
-#         input = forward(layer, input)
-#     end
-#
-#     return input
-# end
 
 function forward(chain::Chain, x::AbstractArray, multi_forward_buffer)
     prepare_chain_input!(chain, x, multi_forward_buffer)
@@ -193,16 +194,6 @@ end
 @inline _forward_layers(layers::Tuple, multi::Tuple, x) =
     _forward_layers(Base.tail(layers), Base.tail(multi),
                     forward(first(layers), x, first(multi)))
-# function forward(chain::Chain, x::AbstractArray, multi_forward_buffer)
-#     prepare_chain_input!(chain, x, multi_forward_buffer)
-#     input = multi_forward_buffer.x
-#
-#     for (layerNN, layerMulti) in zip(chain.layers, multi_forward_buffer.layers)
-#         input = forward(layerNN, input, layerMulti)
-#     end
-#
-#     return input
-# end
 
 """
     (model)(x)
@@ -216,4 +207,12 @@ end
 function (model::Chain)(x, multi_forward_buffer)
     return forward(model, x, multi_forward_buffer)
 end
+
+"""
+    n_params(chain::Chain)
+
+This function calls `n_params(layers...)` on each layer and sum the result. Therefore it 
+returns total number of learnable parameters inside neural network.
+"""
+n_params(chain::Chain) = sum(n_params, chain.layers) # total number in model::Chain
 

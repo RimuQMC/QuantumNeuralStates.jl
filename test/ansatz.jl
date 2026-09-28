@@ -66,7 +66,7 @@ end
     model  = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
 
     addr    = BoseFS{missing}{M}()
-    H       = FroehlichPolaron(addr; l=3.0, v=1.155, mode_cutoff=N)
+    H       = FroehlichPolaron(addr; l=3.0, alpha=2, mode_cutoff=N)
     ansatz  = NeuralAnsatz(LogPsi(), H, model, batch; truncation=1) 
 
     @test ansatz.truncation isa TruncationBuffer

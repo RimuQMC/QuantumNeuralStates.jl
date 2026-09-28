@@ -44,8 +44,15 @@ function Pool(op::Symbol; device::Function=identity)
     return Pool{T, A, op}(Val(op), nothing)
 end
 
-_signature(::Pool{T,A,O}) where {T,A,O} = "Pool($O)"
+Base.show(io::IO, ::Pool{T,A,O}) where {T,A,O} = print(io, "Pool(", repr(O), ")")
 
+"""
+    _signature(l::Pool) -> String
+
+Architecture-signature string for one `Pool` layer: its pooling op. Used
+by [`chain_signature`](@ref).
+"""
+_signature(::Pool{T,A,O}) where {T,A,O} = "Pool($O)"
 
 """
     forward(layer::Pool, x::AbstractArray) -> layer.z
@@ -94,6 +101,16 @@ function forward(layer::Pool{T}, x::AbstractArray{T}, layerMulti) where T
     return layerMulti.a
 end
 
+"""
+    _pool_forward_kernel!(z, x, ::Val{op})
+
+```math
+z[c, b] = \\operatorname{op}_{p} x[p..., c, b]
+```
+
+`op` is `:sum`, `:mean`, `:max`, or `:min`, resolved at compile time (a
+`Val` type parameter).
+"""
 @kernel function _pool_forward_kernel!(z, x, ::Val{op}) where op
     c, b = @index(Global, NTuple)
     Nsp = ndims(x) - 2

@@ -14,8 +14,15 @@ abstract type PadMode end
     NoPad <: PadMode
 
 This structure does not apply padding to [`Conv`](@ref) layer (default).
-It also means that layer output spacial dimensions will shrink by `K-1` factor,
+It also means that layer output spatial dimensions will shrink by `K-1` factor,
 where `K` is convolution kernel window dimension.
+
+# Examples
+```text
+input  (length 5):  x1  x2  x3  x4  x5
+kernel (K = 3):     windows [x1 x2 x3], [x2 x3 x4], [x3 x4 x5]
+output (length 3):  y1  y2  y3
+```
 """
 struct NoPad <: PadMode end # no padding, output shrinks
 
@@ -23,7 +30,24 @@ struct NoPad <: PadMode end # no padding, output shrinks
     Periodic <: PadMode
 
 This padding struct applies periodic padding to [`Conv`](@ref) layer. The 
-layer output spacial dimensions stay same as input spacial dimensions.
+layer output spatial dimensions stay same as input spatial dimensions.
+
+# Examples
+```text
+1D, K = 3:
+
+    x1  x2  x3   →   x3 | x1  x2  x3 | x1
+
+2D, 3×3 kernel (padded border shown outside the box):
+
+         x33  x31  x32  x33  x31
+             ┌──────────────┐
+         x13 │ x11  x12  x13│ x11
+         x23 │ x21  x22  x23│ x21
+         x33 │ x31  x32  x33│ x31
+             └──────────────┘
+         x13  x11  x12  x13  x11
+```
 """
 struct Periodic <: PadMode end # periodic boundary
 
@@ -31,47 +55,84 @@ struct Periodic <: PadMode end # periodic boundary
     Zeros <: PadMode
 
 This padding struct applies zeros padding to [`Conv`](@ref) input dimension 
-borders. Therefore, output spacial dimension does not shrink (same as input 
-spacial dimension) and it creates open-like border system behaviour.
+borders. Therefore, output spatial dimension does not shrink (same as input 
+spatial dimension) and it creates open-like border system behaviour.
+
+# Examples
+```text
+1D, K = 3:
+
+    x1  x2  x3   →   0 | x1  x2  x3 | 0
+
+2D, 3×3 kernel (padded border shown outside the box):
+
+          0    0    0    0    0
+             ┌──────────────┐
+          0  │ x11  x12  x13│  0
+          0  │ x21  x22  x23│  0
+          0  │ x31  x32  x33│  0
+             └──────────────┘
+          0    0    0    0    0
+```
 """
 struct Zeros <: PadMode end  # open boundary, missing neighbours contribute 0
 
-# left padding for a kernel of size K (right side gets K ÷ 2, so even K also works)
+"""
+    _padleft(pad, K) -> Int
+
+Left padding for a kernel of size `K`: `0` for `NoPad`, `(K-1)÷2` otherwise
+(right side gets `K÷2`, so even `K` also works).
+"""
 @inline _padleft(::NoPad, K) = 0
 @inline _padleft(::PadMode, K) = (K - 1) ÷ 2
 
-# output length of one spatial dimension
-# @inline _lout(::NoPad, L, K, s) = (L - K) ÷ s + 1
+"""
+    _lout(pad, L, K, s) -> Int
+
+Output length of one spatial dimension, given input length `L`, kernel size
+`K`, and stride `s`.
+"""
 @inline _lout(::NoPad, L, K, s) = fld(L - K, s) + 1
 @inline _lout(::PadMode, L, K, s) = (L - 1) ÷ s + 1     # = L for s = 1
 
-# forward map: raw (padded) input index -> real index, 0 means "skip this tap"
+"""
+    _src(pad, i, L) -> Int
+
+Map a raw (possibly padded) input index `i` to a real index in `1:L`, per
+`pad`. `0` means "skip this tap" (`Zeros`, out of range).
+"""
 @inline _src(::NoPad, i, L) = i
 @inline _src(::Periodic, i, L) = mod1(i, L)
 @inline _src(::Zeros, i, L) = (1 <= i <= L) ? i : 0
 
-# inverse map for the dx kernel: t = (p-1)*stride  ->  candidate from q, k
+"""
+    _tap_inv(pad, t, L) -> Int
+
+Inverse of [`_src`](@ref) for the `dx` kernel: given `t = (p-1)*stride`,
+returns the candidate offset (wrapped into `0:L-1` for `Periodic`, unchanged
+otherwise).
+"""
 @inline _tap_inv(::PadMode, t, L) = t
 @inline _tap_inv(::Periodic, t, L) = mod(t, L)      # 0-based, always in 0:L-1
 
 
 """
-    Conv(kernel_size, C_in => C_out, act; kwargs...)
+    Conv(kernel_size, C_in => C_out, act; kwargs...) <: ParametricLayer
 
 An N-dimensional convolutional neural network layer, computing:
 
 ```math
 \\begin{aligned}
-a_{c}[\\mathbf{i}] &= \\sum_{c'=1}^{C_\\text{in}} \\sum_{\\mathbf{j}} W[\\mathbf{j}, c', c] \\; x_{c'}[s(\\mathbf{i}-1) + \\mathbf{j}] + b_c \\\\
-z_{c}[\\mathbf{i}] &= \\text{act\\_func}(a_{c}[\\mathbf{i}])
+a_{c}[\\mathbf{p}] &= \\sum_{c'=1}^{C_\\text{in}} \\sum_{\\mathbf{j}} W[\\mathbf{j}, c', c] \\; x_{c'}[s(\\mathbf{p}-1) + \\mathbf{j}] + b_c \\\\
+z_{c}[\\mathbf{p}] &= \\text{act\\_func}(a_{c}[\\mathbf{p}])
 \\end{aligned}
 ```
 
-where ``\\mathbf{i}`` is the (multi-)index of the output site, ``\\mathbf{j}`` runs over the
+where ``\\mathbf{p}`` is the (multi-)index of the output site, ``\\mathbf{j}`` runs over the
 kernel window, ``c'`` and ``c`` are the input and output channels, and ``s`` is the stride.
 Without padding, each spatial dimension of the output has length
 ``L_\\text{out} = \\lfloor (L_\\text{in} - k)/s \\rfloor + 1``. With padding 
-``L_\\text{out} = L_\\text{in}`` - spacial dimensions are preserved. 
+``L_\\text{out} = L_\\text{in}`` - spatial dimensions are preserved. 
 
 Buffers `a` and `z` are allocated on the first forward pass; afterwards the layer is
 allocation-free at runtime.
@@ -88,7 +149,7 @@ allocation-free at runtime.
 * `batch`: batch size.
 * `device`: device function deciding where the layer lives, e.g. `identity` for CPU,
             `cu` for GPU (CUDA), or `mtl` for GPU (Metal).
-* `Layer_Norm`: no need for it in this layer type.
+* `Layer_Norm`: no need for it in this layer type (default=nothing).
 
 # Notes
 The kernel `W` has shape `(kernel_size..., C_in, C_out)`. With
@@ -124,7 +185,7 @@ end
 function Conv(kernel_size::NTuple{N, Int}, channels::Pair{Int,Int}, act::Function;
               stride::Int=1, device::Function=identity, Layer_Norm=false, 
               batch::Int=1, pad::PadMode=NoPad()) where N
-    # L_in is spacial dimension of input 
+    # L_in is spatial dimension of input 
     T = Float32
     C_in, C_out = channels.first, channels.second
     fan_in  = prod(kernel_size) * C_in
@@ -134,26 +195,39 @@ function Conv(kernel_size::NTuple{N, Int}, channels::Pair{Int,Int}, act::Functio
     W = device(randn(T, (kernel_size..., C_in, C_out)) .* std)
     b = device(zeros(T, C_out))
 
-    act_d = get(ACT_DERIV, act, nothing)
-    if act_d === nothing 
-        error("No derivative registered for $act. Use only function define in activations.jl or define yours there.")
-    end
+    act_d = _lookup_deriv(act)
 
     layer_norm = if Layer_Norm===false
         nothing
     else
-        LayerNorm(C_out, batch, device)
+        @warn "This type of layer does not support layer normalisation! Defaults to nothing."
+        nothing
     end
 
     K,V,F,G,PM = typeof(W), typeof(b), typeof(act), typeof(act_d), typeof(pad)
-    return Conv{T,K,V,F,G,K, PM}(W, b, act, act_d, nothing, nothing, 
+    return Conv{T,K,V,F,G,K,PM}(W, b, act, act_d, nothing, nothing, 
                                    stride, pad, layer_norm)
 end
 
+function Base.show(io::IO, l::Conv)
+    N = ndims(l.W)                       # W: (K..., C_in, C_out)
+    print(io, "Conv(", size(l.W)[1:N-2], ", ", size(l.W, N-1), "=>", size(l.W, N),
+          ", ", _actname(l.act_func), "; pad=", nameof(typeof(l.pad)), "()")
+    l.stride == 1            || print(io, ", stride=", l.stride)
+    l.layer_norm === nothing || print(io, ", LayerNorm")
+    print(io, ")")
+end
+
+"""
+    _signature(l::Conv) -> String
+
+Architecture-signature string for one `Conv` layer: kernel size, channels,
+activation, stride, padding mode, and whether `LayerNorm` is present. Used
+by [`chain_signature`](@ref).
+"""
 _signature(l::Conv{T,K,V,F,G,Z,PM}) where {T,K,V,F,G,Z,PM} =
     "Conv($(size(l.W)[1:end-2]),$(size(l.W,ndims(l.W)-1))=>$(size(l.W,ndims(l.W))),"*
-    "$(nameof(l.act_func)),stride=$(l.stride),pad=$(PM),LN=$(l.layer_norm !== nothing))"
-
+    "$(_actname(l.act_func)),stride=$(l.stride),pad=$(PM),LN=$(l.layer_norm !== nothing))"
 
 """
     forward(layer::Conv, x::AbstractArray) -> layer.z
@@ -194,7 +268,7 @@ function forward(layer::Conv, x::AbstractArray)
     _conv_forward_kernel!(backend)(a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp; 
                           ndrange = size(a))
     KernelAbstractions.synchronize(backend)
-    z .= layer.act_func.(a) 
+    apply_act!(layer, a, z)
     return z
 end
 
@@ -210,7 +284,7 @@ function forward(layer::Conv, x::AbstractArray, layerMulti)
     _conv_forward_kernel!(backend)(layerMulti.a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp;
                                    ndrange = size(layerMulti.a))
     KernelAbstractions.synchronize(backend)
-    layerMulti.a .= layer.act_func.(layerMulti.a)
+    apply_act!(layer, layerMulti.a, layerMulti.a)
     return layerMulti.a
 end
 

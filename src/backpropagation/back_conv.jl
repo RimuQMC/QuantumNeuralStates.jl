@@ -22,10 +22,25 @@ function ConvBuffer(layer::Conv, x::AbstractArray)
     layer.a === nothing && error("Run a forward pass before building backprop buffers.")
     return ConvBuffer(similar(layer.a), similar(x))
 end
+Base.show(io::IO, ::MIME"text/plain", ::ConvBuffer) = print(io, "ConvBuffer")
 
+"""
+    make_buffer(l::Conv, x) -> ConvBuffer
+
+Build the [`ConvBuffer`](@ref) for `l`, sized from `x`.
+"""
 make_buffer(l::Conv,  x) = ConvBuffer(l, x)
 
-# J_W[k..., c_in, c_out, b] = Σ_p δz[p, c_out, b] · x[(p-1)s + k, c_in, b]
+"""
+    _conv_JW_kernel!(J_W, δz, x, stride, pad, ::Val{Nsp})
+
+```math
+J_W[k..., c_{in}, c_{out}, b] = \\sum_{p} \\delta z[p, c_{out}, b] \\cdot x[\\mathrm{src}(i), c_{in}, b],
+\\qquad i = (p-1)s + k - p_l
+```
+
+where `p_l = _padleft(pad, K)` and `src` is padding-dependent.
+"""
 @kernel function _conv_JW_kernel!(J_W, δz, x, stride::Int, pad, ::Val{Nsp}) where Nsp
     idx = @index(Global, NTuple)  # (k..., c_in, c_out, b)
     c_in = idx[Nsp+1]
@@ -44,7 +59,13 @@ make_buffer(l::Conv,  x) = ConvBuffer(l, x)
     @inbounds J_W[idx...] = s
 end
 
-# J_b[c_out, b] = Σ_p δz[p, c_out, b]
+"""
+    _conv_Jb_kernel!(J_b, δz, ::Val{Nsp})
+
+```math
+J_b[c_{out}, b] = \\sum_{p} \\delta z[p, c_{out}, b]
+```
+"""
 @kernel function _conv_Jb_kernel!(J_b, δz, ::Val{Nsp}) where Nsp
     o, n = @index(Global, NTuple)
     s = zero(eltype(J_b))
@@ -54,7 +75,15 @@ end
     @inbounds J_b[o, n] = s
 end
 
-# δx[q..., c_in, b] = Σ_o Σ_k W[k, c_in, o] · δz[(q-k)/s + 1, o, b] 
+"""
+    _conv_dx_kernel!(δx, δz, W, stride, pad, ::Val{Nsp})
+
+```math
+\\delta x[q..., c_{in}, b] = \\sum_{o} \\sum_{k} W[k, c_{in}, o] \\cdot \\delta z[(q-k)/s + 1, o, b]
+```
+
+where `p_l = _padleft(pad, K)` and `tap_inv` is padding-dependent (the inverse of `src`).
+"""
 @kernel function _conv_dx_kernel!(δx, δz, W, stride::Int, pad, ::Val{Nsp}) where Nsp
     idx = @index(Global, NTuple)      # (q..., c_in, b)
     c_in = idx[Nsp+1]
@@ -84,6 +113,9 @@ Reverse pass through one [`Conv`](@ref) layer, writing the per-sample Jacobian
 into the contiguous arrays `J_W` and `J_b`. Returns the gradient `buf.δ` to be
 passed on to the layer below.
 
+`J_W` and `J_b` are computed by [`_conv_JW_kernel!`](@ref) and
+[`_conv_Jb_kernel!`](@ref); `buf.δ` is computed by [`_conv_dx_kernel!`](@ref).
+
 # Arguments
 * `layer`: a `Conv` layer.
 * `buf`: [`ConvBuffer`](@ref) holding the input and output gradients of
@@ -98,7 +130,8 @@ function back!(layer::Conv, buf::ConvBuffer, J_W, J_b,
     backend = KernelAbstractions.get_backend(x)
 
     a = something(layer.a)
-    buf.δz .= layer.act_deriv.(a) .* δ        # δ_a = f'(a) ⊙ δ, fused, in-place
+    apply_act_deriv!(buf.δz, layer, a)
+    buf.δz .*= δ
 
     Nsp = Val(ndims(x) - 2)
     _conv_JW_kernel!(backend)(J_W, buf.δz, x, layer.stride, layer.pad, Nsp; ndrange = size(J_W))

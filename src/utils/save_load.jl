@@ -1,8 +1,24 @@
 
 
 
+"""
+    chain_signature(chain) -> String
+
+Build a compact string identifying `chain`'s architecture: each layer's
+type, shape, and configuration (kernel size, channels, stride, padding
+mode, activation, whether `LayerNorm` is present), dispatched per layer
+type via [`_signature`](@ref). Used to verify a freshly-constructed model matches
+a saved one before loading weights into it — see [`load_master`](@ref).
+"""
 chain_signature(chain) = join(map(_signature, chain.layers), " | ")
 
+
+"""
+    _write_architecture(io, chain)
+
+Write `chain`'s [`chain_signature`](@ref) to `io`, under an `"Architecture:"`
+header. See [`save_master`](@ref).
+"""
 function _write_architecture(io, chain)
     println(io, "Architecture:")
     println(io, chain_signature(chain))
@@ -20,17 +36,6 @@ Write weights to an open IO stream.
 function _write_weights(io::IO, θ::AbstractVector)
     println(io, "Weights:")
     join(io, Float32.(Array(θ)), ' ')
-    println(io)
-end
-
-"""
-    _write_layernorm_flag(io, chain)
-
-Write LayerNorm flag if used: true/false for every layer in chain.
-"""
-function _write_layernorm_flag(io, chain)
-    println(io, "LayerNorm:")
-    join(io, [layer.layer_norm !== nothing ? "true" : "false" for layer in chain.layers], " ")
     println(io)
 end
 
@@ -68,63 +73,38 @@ function _write_input_scale(io::IO, ansatz)
 end
 
 """
-    save_weights(filename, θ)
+    save_master(filename, θ, addrs, ansatz; num_width=3)
 
-Save flatten weights vector "θ" to a plain-text file. See [`_write_weights`].
-"""
-function save_weights(filename::String, θ::AbstractVector)
-    open(filename, "w") do io
-        _write_weights(io, θ)
-    end
-    @info "Weights saved to $filename ($(length(θ)) parameters)"
-end
+Master function that saves everything needed to reconstruct a trained
+[`NeuralAnsatz`](@ref): the model's architecture signature, input scaling
+configuration, flat parameter vector, and the current VMC walker addresses.
 
-"""
-    save_addrs(filename, addrs; num_width=3)
-
-Save addresses to a plain-text file. Addresses are separated by ", " on 
-a single line. See [`_write_addrs`].
-"""
-function save_addrs(filename::String, addrs::Vector; num_width::Int=3)
-    open(filename, "w") do io
-        _write_addrs(io, addrs; num_width)
-    end
-    @info "Addresses saved to $filename ($(length(addrs)) addresses)"
-end
-
-"""
-    save_input_scale(filename, ansatz)
-
-Save information about input scaling function and about input normalisations.
-See [`_write_input_scale`].
-"""
-function save_input_scale(filename::String, ansatz)
-    open(filename, "w") do io
-        _write_input_scale(io, ansatz)
-    end
-    @info "Input scaling saved to $filename.)"
-end
-
-"""
-    save_master(filename, θ, addrs; num_width=3)
-
-Master function, that saves all important Neural Network configurations. 
+Loaded back with [`load_master`](@ref), which verifies the saved architecture
+and input scaling match the freshly-constructed `ansatz` before restoring `θ`.
 
 ## Example of txt file
+    Architecture:
+        Conv((3,),1=>100,relu,stride=1,pad=Periodic,LN=false) | Pool(mean) | Dense(100=>1,identity,LN=false)
+
     Input Scaling:
-        scale function: 
+        scale function:
         max_norm:
         normalisation:
 
     Weights:
         <Float32 values>
 
-    LayerNorm:
-        true, false, ....
-
     Inputs:
         0   0   0   0   0,   1   0   0   0   0, ...
 
+# Arguments
+* `filename`: path to write to.
+* `θ`: flat parameter vector (e.g. `jac.θ`).
+* `addrs`: current VMC walker addresses, saved to resume sampling.
+* `ansatz`: the `NeuralAnsatz` being saved.
+
+# Keywords
+* `num_width`: column width used when formatting `addrs`.
 """
 function save_master(filename::String, θ::AbstractVector, addrs::Vector, ansatz;
                              num_width::Int=3)
@@ -134,8 +114,6 @@ function save_master(filename::String, θ::AbstractVector, addrs::Vector, ansatz
         _write_input_scale(io, ansatz)
         println(io)
         _write_weights(io, θ)
-        # println(io)
-        # _write_layernorm_flag(io, ansatz.model)
         println(io)
         _write_addrs(io, addrs; num_width)
     end
@@ -147,17 +125,15 @@ end
 parse_kv(line) = strip(split(line, ":", limit=2)[2])
 
 """
-    load_master(chain, filename::String) -> x
+    load_master(ansatz, filename::String) -> x
 
-Loads all configurations from plain text file into the Neural Network model `chain` 
-and returns the saved inputs `x` as a matrix of `Int` (For reconstraction in Rimu notation). 
-If only one column was saved, `vec(x)` is called to get a flat vector.
+Load a saved model — written by [`save_master`](@ref) — into `ansatz`,
+after verifying it's compatible with the saved one (architecture and input
+scaling). Returns the saved walker addresses `x` as a matrix of `Int`.
 
 # Arguments
-
-* `chain`: Neural Network model. See [`Chain`](@ref).
-* `filename`: "name_of_file.txt".
-
+* `ansatz`: the `NeuralAnsatz` to load into. See [`NeuralAnsatz`](@ref).
+* `filename`: path to the saved file.
 """
 function load_master(ansatz, filename::String)
     lines = readlines(filename)
@@ -165,7 +141,6 @@ function load_master(ansatz, filename::String)
     arch_idx = findfirst(==("Architecture:"), lines)
     sc_idx= findfirst(==("Input Scaling:"), lines)
     w_idx = findfirst(==("Weights:"), lines)
-    # ln_idx = findfirst(==("LayerNorm:"), lines)
     i_idx = findfirst(==("Inputs:"),  lines)
     @assert arch_idx !== nothing "Missing 'Architecture:' header"
     @assert sc_idx !== nothing "Missing 'Input Scaling:' header"
@@ -204,46 +179,16 @@ function load_master(ansatz, filename::String)
     # --- line 2: weights ---
     θ_cpu = parse.(Float32, split(weights_line))
 
-    # # --- line 2.5: layer normalisation flags ---
-    # saved_ln_flags = parse.(Bool, split(lines[ln_idx + 1]))
-    # current_ln_flags = [layer.layer_norm !== nothing for layer in ansatz.model.layers]
-    # @assert saved_ln_flags == current_ln_flags "LayerNorm configuration mismatch: saved=$saved_ln_flags, " * 
-    #     "current=$current_ln_flags"
-
     # --- line 3: inputs (columns separated by ", ") ---
     col_strs = split(inputs_line, ", ")
     cols = [parse.(Int, split(strip(c))) for c in col_strs]
     # check: all columns have same length
     @assert all(length(c) == length(cols[1]) for c in cols) "Input columns have inconsistent lengths"
     x = reduce(hcat, cols)   # Matrix{Int} of size (input_dim, batch)
-
-    # rs     = ()
-    # offset = 0
-    # for layer in ansatz.model.layers
-    #     nW = length(layer.W)
-    #     nb = length(layer.b)
-    #     if layer.layer_norm !== nothing
-    #         nγ = length(layer.layer_norm.γ)
-    #         nβ = length(layer.layer_norm.β)
-    #         r = LayerRange(
-    #             offset+1          : offset+nW,
-    #             offset+nW+1       : offset+nW+nb,
-    #             offset+nW+nb+1    : offset+nW+nb+nγ,
-    #             offset+nW+nb+nγ+1 : offset+nW+nb+nγ+nβ
-    #         )
-    #         offset += nW + nb + nγ + nβ
-    #     else
-    #         r = LayerRange(offset+1 : offset+nW, offset+nW+1 : offset+nW+nb)
-    #         offset += nW + nb
-    #     end
-    #     rs = (rs..., r)
-    # end
-    # ranges = rs
-    # p      = offset
     
     rs = (); offset = 0
     for layer in ansatz.model.layers
-        if !hasparams(layer)                       # Pool, or any future parameter-free layer
+        if !hasparams(layer)        # parameter-free layer check
             rs = (rs..., LayerRange((offset+1):offset, (offset+1):offset))
             continue
         end
@@ -269,9 +214,6 @@ function load_master(ansatz, filename::String)
     refparam = first(filter(hasparams, ansatz.model.layers))
     θ = similar(refparam.b, length(θ_cpu))
     copyto!(θ, θ_cpu)
-    # l = first(ansatz.model.layers)
-    # θ = similar(l.b, length(θ_cpu))
-    # copyto!(θ, θ_cpu)
     
     scaling_old = saved_normalisation
     scaling_new = ansatz.normalisation
@@ -290,24 +232,8 @@ function load_master(ansatz, filename::String)
             first_param_seen = true
         end
     end
-    # for (i, (layer, range)) in enumerate(zip(ansatz.model.layers, ranges))
-    #     layer.W .= reshape(view(θ, range.W), size(layer.W))
-    #     layer.b .= view(θ, range.b)
-    #     if range.γ !== nothing
-    #         layer.layer_norm.γ .= reshape(view(θ, range.γ), size(layer.layer_norm.γ))
-    #         layer.layer_norm.β .= reshape(view(θ, range.β), size(layer.layer_norm.β))
-    #     end
-    #     if i == 1
-    #         # row_sum_W = vec(sum(layer.W, dims=2))
-    #         layer.W .*= ratio
-    #         # layer.b .-= 0.1f0 .* (ratio - 1f0) .* row_sum_W
-    #     end
-    # end
 
     @info "Weights loaded from $filename ($p parameters, input size $(size(x)))"
-    # if size(x, 2) == 1
-    #     x = vec(x)      # if batch = 1, x is vector (not matrix)
-    # end
     return x
 end
 

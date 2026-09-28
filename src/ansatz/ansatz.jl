@@ -26,10 +26,10 @@ and importance sampling.
                 evaluation. Needs to be manually set, see [`MeanField`](@ref).
 * `truncation`: can be used for input space truncation. See [`TruncationBuffer`](@ref).
 * `neuron_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. See
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`neuron_statistics`](@ref).
 * `jacobian_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. see
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`jacobian_statistics`](@ref).
 
 # Example
@@ -186,6 +186,25 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
                 addrs_buffer, result_buffer, result_dict, first_iter, 
                 input_scale_func, max_norm, normalisation, multi_forward_buffer, 
                 meanfield, trun, neuron_statistics, jacobian_statistics)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", a::NeuralAnsatz)
+    rows = (
+        "hamiltonian" => _typename(a.hamiltonian),
+        "ansatz type" => _typename(a.ansatz_type) * "()",
+        "input scale" => string(_funcname(a.input_scale_func),
+                                         ", max_norm = ", repr(a.max_norm)),
+        "multi-forward buffer" => _flag_mem(a.multi_forward_buffer),
+        "mean field" => _flag_mem(a.meanfield),
+        "truncation" => sprint(print, a.truncation),
+        "total memory estimate" => _fmt_bytes(memory_estimate(a)),
+    )
+    w = maximum(length ∘ first, rows)
+
+    print(io, "NeuralAnsatz")
+    for (k, v) in rows
+        print(io, "\n  ", rpad(k * ":", w + 1), " ", v)
+    end
 end
 
 """

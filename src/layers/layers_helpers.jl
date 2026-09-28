@@ -25,6 +25,15 @@ operations rather than for neural network training.
 """
 abstract type FreeLayer <: AbstractLayer end # no parameters
 
+"""
+    hasparams(::ParametricLayer) = true
+    hasparams(::FreeLayer) = false
+
+Helper functions used in backpropagation to distinguish layers with trainable weights 
+(ignore [`FreeLayer`](@ref), collect [`ParametricLayer`](@ref)).
+"""
+hasparams(::ParametricLayer) = true
+hasparams(::FreeLayer) = false
 
 """
     _init_std(T, in, out, act)
@@ -52,25 +61,45 @@ _lookup_deriv(act::Function) = get(ACT_DERIV, act) do
 end
 
 """
-    _dense_alloc(in, out, act; batch, device, Layer_Norm)
+    apply_act!(layer::ParametricLayer, a, z)
 
-This function define properly sized buffers used in [`Dense`](@ref) layer. This is
-done in batched approach and it is also `device` agnostics (CPU/GPU). Also allows
-defining [`LayerNorm`](@ref) for current layer.
+This function applies activation function on [`ParametricLayer`](@ref). 
+
+This function is dispatched on [`Dense`](@ref) if the layer has multiple activations.
+It is mostly used in final neural network `Dense` output layers, to allow many output 
+wave-function representations. See also [`AnsatzType`](@ref).
 """
-function _dense_alloc(in::Int, out::Int, act;
-                       batch::Int, device::Function, Layer_Norm)
-    T = Float32
-    std = _init_std(T, in, out, act)     # see note below re: He/Glorot dispatch
-    W  = device(randn(T, out, in) .* std)
-    b  = device(zeros(T, out))
-
-    a = device(zeros(T, out, batch))
-    z = device(zeros(T, out, batch))
-
-    layer_norm = Layer_Norm === false ? nothing : LayerNorm(out, batch, device)
-    return T, W, b, a, z, layer_norm
+function apply_act!(layer::ParametricLayer, a, z)
+    # single activations in any layer
+    z .= layer.act_func.(a)
+    return z
 end
+
+"""
+    apply_act_deriv!(δz, layer::ParametricLayer, a)
+
+This function applies derivative of activation function on [`ParametricLayer`](@ref). 
+
+This function is dispatched on [`Dense`](@ref) if the layer has multiple activations.
+It is mostly used in final neural network `Dense` output layers, to allow many output 
+wave-function representations. See also [`AnsatzType`](@ref).
+"""
+function apply_act_deriv!(δz, layer::ParametricLayer, a)
+    δz .= layer.act_deriv.(a)
+    return δz
+end
+
+"""
+    n_params(layer) -> Int
+
+Return the total number of learnable parameters of `layer`
+(weights, biases, and layer-normalization parameters, if present).
+"""
+n_params(layer::ParametricLayer) =
+    length(layer.W) + length(layer.b) + n_params(layer.layer_norm)
+
+n_params(::FreeLayer) = 0   # no learnable parameters
+n_params(::Nothing)   = 0
 
 """
     MultiForwardLayer
