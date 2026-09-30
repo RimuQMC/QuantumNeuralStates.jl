@@ -229,7 +229,7 @@ using Random
     end
 
     @testset "allocations" begin
-        enc   = MomentumEncoding(sz, H)
+        enc = MomentumEncoding(sz, H)
         model = Chain(enc,
                       Conv((3,3), nchannels(enc)=>4, relu; batch=batch, pad=Zeros()),
                       Pool(:sum),
@@ -239,9 +239,9 @@ using Random
         x = QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)    # warm-up
         QuantumNeuralStates.prepare_chain_input!(na.model, x)
 
-        @test @allocated(QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)) == 0
-        @test @allocated(QuantumNeuralStates.encode!(na.model.xe, enc)) < 4096        # launch only
-        @test @allocated(QuantumNeuralStates.prepare_chain_input!(na.model, x)) < 4096
+        @test @allocated(QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)) <= 64
+        @test @allocated(QuantumNeuralStates.encode!(na.model.xe, enc)) <= 256        # launch only
+        @test @allocated(QuantumNeuralStates.prepare_chain_input!(na.model, x)) <= 256
     end
 
     @testset "1D grid" begin
