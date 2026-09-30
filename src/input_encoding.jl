@@ -66,12 +66,11 @@ Hamiltonians (e.g. `FroehlichPolaron`). With `D` spatial dimensions:
 * `x[m, d, b]   = n_m · k_{m,d}`      for d = 1 … D
   (note: occupation of a mode with k = 0 is then invisible to the network)
 
-Momenta are divided by `kscale`. By default this is √(two_m·ω), the natural
-polaron momentum, so input values are physical and comparable between box
-lengths `l`. `device` must be the same device function as used for the `Chain`.
+Momenta can divided by `kscale`. By default this scaling is set to 1. `device` must 
+be the same device function as used for the `Chain`.
 
-The n channel is filled by [`prepare_input!`](@ref) (including `input_scale_func`
-and normalisation); the n·k channels are then built on the device by
+The `n` (occupation) channel is filled by [`prepare_input!`](@ref) (including `input_scale_func`
+and normalisation); the `n·k` (momenta) channels are then built on the device by
 [`encode!`](@ref) from that n channel.
 
 # Example
