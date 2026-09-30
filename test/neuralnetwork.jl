@@ -294,7 +294,8 @@ end
     conv2 = Conv((3,), 8=>8, act; batch=batch, pad=Periodic())
     pool  = Pool(:mean)
     dense = Dense(8=>1, identity; batch=batch)
-    model = Chain(conv1, conv2, pool, dense; batch=batch, input_size=(M,))
+    enc = NoEncoding((M,))
+    model = Chain(enc, conv1, conv2, pool, dense; batch=batch)
 
     addr = near_uniform(BoseFS{5, M})
     model_multi = QuantumNeuralStates.MultiForwardBuffer(model, addr, batch)
@@ -323,15 +324,17 @@ end
 
     @testset "JacobianBuffer check (Dense-only)" begin
         in_dim, out_dim = 10, 3
+        addr = BoseFS{missing}{in_dim}()
+        H = FroehlichPolaron(addr; l=3.0, alpha=2, mode_cutoff=5)
+
         act = tanh
         layer1 = Dense(in_dim=>out_dim, act; batch=batch)
         layer2 = Dense(out_dim=>1, identity; batch=batch)
-        model = Chain(layer1, layer2; batch=batch)
+        enc = OccupationEncoding((in_dim,), H)
+        model = Chain(enc, layer1, layer2; batch=batch)
         x = randn(T, in_dim, batch)
         forward(model, x)
 
-        addr = BoseFS{missing}{in_dim}()
-        H = FroehlichPolaron(addr; l=3.0, alpha=2, mode_cutoff=5)
         ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
         buffers = make_buffers(ansatz.model)
@@ -358,15 +361,17 @@ end
 
     @testset "Conv+Pool+Dense: full-chain check" begin
         M = 8
+        addr = BoseFS{missing}{M}()
+        H = FroehlichPolaron(addr; l=3.0, alpha=2, mode_cutoff=5)
+
         conv = Conv((3,), 1=>4, tanh; batch=batch, pad=Periodic())
         pool = Pool(:mean)
         dense = Dense(4=>1, identity; batch=batch)
-        model = Chain(conv, pool, dense; batch=batch, input_size=(M,))
+        enc = OccupationEncoding((M,), H)
+        model = Chain(enc, conv, pool, dense; batch=batch)
         x = randn(T, M, 1, batch)
         forward(model, x)
 
-        addr = BoseFS{missing}{M}()
-        H = FroehlichPolaron(addr; l=3.0, alpha=2, mode_cutoff=5)
         ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
         buffers = make_buffers(ansatz.model)

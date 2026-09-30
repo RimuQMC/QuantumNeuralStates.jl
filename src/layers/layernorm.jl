@@ -169,5 +169,5 @@ function ln_backward!(ln::LayerNorm{T}, δ::AbstractMatrix{T}) where T
     return δ
 end
 
-n_params(ln::LayerNorm) = 2 # scalar γ and β in layer norm
+n_params(ln::LayerNorm) = length(ln.γ) + length(ln.β)
 

@@ -17,6 +17,8 @@ device = select_device()
 # -------------------------------------------------------------------
 N = 50 # number of particles
 M = 10 # number of sites
+addr = near_uniform(BoseFS{N,M}) # Rimu
+H = HubbardReal1D(addr; u=0.1) # Rimu
 
 # -------------------------------------------------------------------
 # NN Model
@@ -24,16 +26,20 @@ M = 10 # number of sites
 batch  = 1024
 act = relu
 pad = Periodic()
-model = Chain(Conv((3,), 1=>32, act; batch=batch, device=device, pad=pad),
+input = OccupationEncoding((10,), H; device=device)
+model = Chain(input,
+              Conv((3,), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
               Pool(:mean; device=device),
               Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
               Dense(32=>1, identity; batch=batch, device=device); 
-              batch=batch, device=device, input_size=(10,))
+              batch=batch, device=device)
+
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch) # NN ansatz for wave-function
 
 # -------------------------------------------------------------------
-# ALL VARIABLES
+# ALL TRAINING VARIABLES
 # -------------------------------------------------------------------
 phases = [
     TrainingPhase(
@@ -63,12 +69,6 @@ phases = [
         max_epochs = 1000,
     ),
 ]
-
-# RIMU VARIABLES
-addr = near_uniform(BoseFS{N,M})
-H = HubbardReal1D(addr; u=0.1)
-ansatz = NeuralAnsatz(LogPsi(), H, model, batch) # NN ansatz for wave-function
-
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
 SAVEFILE = "./weights/example.txt"

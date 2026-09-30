@@ -17,21 +17,26 @@ device = select_device()
 # -------------------------------------------------------------------
 N = 10 # number of particles
 M = 10 # number of sites
+addr = BoseFS{N,M}(5=>10); # Rimu
+H = HubbardMom1D(addr); # Rimu
 
 # -------------------------------------------------------------------
 # NN Model
 # -------------------------------------------------------------------
 batch  = 1024
-# Fully connected Neural Network with 3 hidden layers and in each layer 100 neurons
 act = tanh_fast
-model = Chain(Dense(M=>200, act; batch=batch, device=device, layer_norm=true),
+input = MomentumEncoding((M,), H; device=device)
+model = Chain(input,
+              Dense(M*nchannels(input)=>200, act; batch=batch, device=device, layer_norm=true),
               Dense(200=>200, act; batch=batch, device=device, layer_norm=true),
               Dense(200=>200, act; batch=batch, device=device, layer_norm=true),
               Dense(200=>2, (identity, act); batch=batch, device=device); 
-              device=device, batch=batch, input_size=(M,))
+              device=device, batch=batch)
+
+ansatz  = NeuralAnsatz(LogPsiSignTanh(), H, model, batch); # NN ansatz for wave-function
 
 # --------------------------------------------------------------------------------------------------------------------------------------
-# ALL VARIABLES
+# ALL TRAINING VARIABLES
 # --------------------------------------------------------------------------------------------------------------------------------------
 phases = [
     TrainingPhase(
@@ -49,12 +54,6 @@ phases = [
         max_epochs = 1000,
     ),
 ]
-
-# RIMU VARIABLES
-addr = BoseFS{N,M}(5=>10);
-H = HubbardMom1D(addr);
-ansatz  = NeuralAnsatz(LogPsiSignTanh(), H, model, batch); # NN ansatz for wave-function
-
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
 SAVEFILE     = "./weights/example_sign.txt"

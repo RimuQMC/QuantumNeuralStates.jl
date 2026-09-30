@@ -4,14 +4,15 @@
 """
     chain_signature(chain) -> String
 
-Build a compact string identifying `chain`'s architecture: each layer's
-type, shape, and configuration (kernel size, channels, stride, padding
-mode, activation, whether `LayerNorm` is present), dispatched per layer
-type via [`_signature`](@ref). Used to verify a freshly-constructed model matches
-a saved one before loading weights into it — see [`load_master`](@ref).
+Build a compact string identifying `chain`'s architecture: the input encoding
+(type, grid size, channels) followed by each layer's type, shape, and
+configuration (kernel size, channels, stride, padding mode, activation, whether
+`LayerNorm` is present), dispatched per component via [`_signature`](@ref).
+Used to verify a freshly-constructed model matches a saved one before loading
+weights into it — see [`load_master`](@ref).
 """
-chain_signature(chain) = join(map(_signature, chain.layers), " | ")
-
+chain_signature(chain) =
+    join((_signature(chain.enc), map(_signature, chain.layers)...), " | ")
 
 """
     _write_architecture(io, chain)
@@ -233,7 +234,7 @@ function load_master(ansatz, filename::String)
         end
     end
 
-    @info "Weights loaded from $filename ($p parameters, input size $(size(x)))"
+    @info "Weights loaded from $filename ($p parameters)"
     return x
 end
 

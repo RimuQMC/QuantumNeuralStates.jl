@@ -58,6 +58,8 @@ _get_burnin
 _build_opt_buffer
 _run_epoch
 
+_check_device
+
 hasparams
 _init_std
 _lookup_deriv
@@ -66,6 +68,8 @@ _padleft
 _lout
 _src
 _tap_inv
+_check_input
+_input_shape
 _pool_forward_kernel!
 LayerNorm_multiforward
 

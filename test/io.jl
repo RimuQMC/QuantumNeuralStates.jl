@@ -48,9 +48,10 @@ const tmpdir = mktempdir()
     end
 
     @testset "Save/Load all at once -> master save/load" begin
-        model = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
         addr = near_uniform(BoseFS{N,M})
         H = HubbardReal1D(addr; u=0.1)
+        enc = OccupationEncoding((M,), H)
+        model = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
         ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
         addrs_n = fill(addr, batch)
 
@@ -65,7 +66,8 @@ const tmpdir = mktempdir()
         @test isfile(file)
 
         # create new network with new (random-init) parameters
-        model2 = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
+        enc = OccupationEncoding((M,), H)
+        model2 = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
         ansatz2 = NeuralAnsatz(LogPsi(), H, model2, batch)
         buffers2 = make_buffers(ansatz2.model)
 
@@ -80,7 +82,8 @@ const tmpdir = mktempdir()
         @test ansatz.normalisation == ansatz2.normalisation
 
         @testset "architecture mismatch is caught" begin
-            model3 = build_model("FCNN", [M, 20, 20, 1], tanh_fast; batch=batch)   # different hidden widths
+            enc = OccupationEncoding((M,), H)
+            model3 = build_model("FCNN", enc, [M, 20, 20, 1], tanh_fast; batch=batch)   # different hidden widths
             ansatz3 = NeuralAnsatz(LogPsi(), H, model3, batch)
             @test_throws ErrorException load_master(ansatz3, file)
         end
@@ -93,9 +96,10 @@ end
     M = 3
     N = 3
     batch = 3
-    model = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
     addr = near_uniform(BoseFS{N,M});
     H = HubbardReal1D(addr; u=0.1);
+    enc = OccupationEncoding((M,), H)
+    model = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
     file_neuron = joinpath(tmpdir, "neuron.txt")
     file_jacobian = joinpath(tmpdir, "jacobian.txt")
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 

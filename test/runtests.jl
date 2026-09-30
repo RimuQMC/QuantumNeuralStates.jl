@@ -21,6 +21,10 @@ using ExplicitImports: check_no_implicit_imports
     include("neuralnetwork.jl")
 end
 
+@safetestset "InputEncoding" begin
+    include("input_encoding.jl")
+end
+
 @safetestset "Ansatz" begin
     include("ansatz.jl")
 end
@@ -40,6 +44,8 @@ end
 @testset "Main training loop" begin
     N = 5 # number of particles
     M = 5 # number of sites
+    addr = near_uniform(BoseFS{N,M})
+    H = HubbardReal1D(addr; u=0.1)
     batch  = 10
 
     conv1 = Conv((3,), 1=>8, relu; batch=batch, pad=Periodic())
@@ -47,7 +53,8 @@ end
     pool  = Pool(:mean)
     dense = Dense(8=>8, tanh; batch=batch)
     dense = Dense(8=>1, identity; batch=batch)
-    model = Chain(conv1, conv2, pool, dense; batch=batch, input_size=(M,))
+    enc = OccupationEncoding((M,), H)
+    model = Chain(enc, conv1, conv2, pool, dense; batch=batch)
 
     phases = [
         TrainingPhase(
@@ -63,8 +70,7 @@ end
             max_epochs = 10,
            )
     ]
-    addr = near_uniform(BoseFS{N,M})
-    H = HubbardReal1D(addr; u=0.1)
+
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
     run_training_loop(H, ansatz, addr, phases; save=false)

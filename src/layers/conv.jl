@@ -230,6 +230,17 @@ _signature(l::Conv{T,K,V,F,G,Z,PM}) where {T,K,V,F,G,Z,PM} =
     "$(_actname(l.act_func)),stride=$(l.stride),pad=$(PM),LN=$(l.layer_norm !== nothing))"
 
 """
+    _check_input(pad, input_size, K)
+
+Check that the input grid is at least as large as the kernel `K` when there is
+no padding (`NoPad`). No-op for other padding modes.
+"""
+_check_input(::NoPad, input_size, K) =
+    all(input_size .>= K) || error("input_size $input_size is smaller than kernel $K")
+_check_input(::PadMode, input_size, K) = nothing
+
+
+"""
     forward(layer::Conv, x::AbstractArray) -> layer.z
 
 Forward pass through a [`Conv`](@ref) layer. It calculates the forward pass

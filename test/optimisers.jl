@@ -31,9 +31,10 @@ end
     M = 3
     N = 3
     batch = 3
-    model  = build_model("FCNN", [M, 10, 10, 10, 1], tanh_fast; batch=batch)
     addr = near_uniform(BoseFS{N,M});
     H = HubbardReal1D(addr; u=0.1);
+    enc = OccupationEncoding((M,), H)
+    model  = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
     buffers = make_buffers(ansatz.model)

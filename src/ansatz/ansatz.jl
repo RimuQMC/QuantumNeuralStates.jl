@@ -128,6 +128,9 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     # safe check of ansatz_type and number of model outputs
     @assert (ansatz_type.num_outputs == size(last(model.layers).z, 1)) "" * 
             "Number of outputs in model (neural network) does not correspond with ansatz_type!"
+    model.enc isa NoEncoding &&
+    error("NeuralAnsatz needs an encoding that maps Fock states to network inputs " *
+          "(OccupationEncoding or MomentumEncoding); NoEncoding is for plain NN use")
 
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
@@ -211,38 +214,44 @@ end
     prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer) -> x_cpu_buffer
     prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer) -> x_cpu_buffer
 
-Fill `x_cpu_buffer` of shape same as `x` in [`Chain`](@ref) (each architecture has its own
-input dimensions) with the scaled occupation numbers `onr(addr)`. A single `addr` is written 
-into every batch column; a vector `addrs` fills one column per address.
+Write the scaled occupation numbers `input_scale_func(onr(addr)) * normalisation`
+into the occupation channel of `x_cpu_buffer` (shape of the `Chain` input).
+A single `addr` is written into every batch column; a vector `addrs` fills one
+column per address.
+
+Internally the buffer is viewed as `buf[m, c, b]` (site, channel, sample), so
+the same code serves Dense and Conv inputs of any dimension. Only channel
+`occupation_channel(enc)` is written here; all other channels are built on the
+device by [`encode!`](@ref) inside [`prepare_chain_input!`](@ref).
 """
 function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
-    buf = _flat(x_cpu_buffer)
-    v   = na.input_scale_func.(Float32.(onr(addr)))
-    length(v) == size(buf, 1) ||
-        error("onr(addr) has $(length(v)) entries, model input expects $(size(buf, 1))")
-    if na.max_norm === nothing
-        buf .= v
-    else
-        buf .= v .* na.normalisation
-    end
-    return x_cpu_buffer          # original shape, so the GPU copy sees (L..., C_in, batch)
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x_cpu_buffer, ndims(x_cpu_buffer))
+    buf = reshape(x_cpu_buffer, M, C, B)
+    ch  = occupation_channel(enc)
+    f, s = na.input_scale_func, na.normalisation
+
+    o = onr(addr)
+    length(o) == M ||
+        error("onr(addr) has $(length(o)) entries, encoding expects $M sites")
+    @views buf[:, ch, :] .= f.(Float32.(o)) .* s      # length-M vector → every column
+    return x_cpu_buffer
 end
 function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer)
-    buf = _flat(x_cpu_buffer)
-    @inbounds for i in eachindex(addrs)
-        col = @view buf[:, i]                    # one address per column
-        if na.max_norm === nothing
-            col .= na.input_scale_func.(Float32.(onr(addrs[i])))
-        else
-            col .= na.input_scale_func.(Float32.(onr(addrs[i]))) .* na.normalisation
-        end
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x_cpu_buffer, ndims(x_cpu_buffer))
+    length(addrs) <= B ||
+        error("got $(length(addrs)) addresses but the buffer has only $B columns")
+
+    buf = reshape(x_cpu_buffer, M, C, B)
+    ch  = occupation_channel(enc)
+    f, s = na.input_scale_func, na.normalisation
+
+    @inbounds for (b, addr) in enumerate(addrs)
+        @views buf[:, ch, b] .= f.(Float32.(onr(addr))) .* s   # one column per address
     end
     return x_cpu_buffer
 end
-
-# (in, batch) for Dense, (L*C_in, batch) for Conv; same memory as x_cpu_buffer
-_flat(buf) = reshape(buf, :, size(buf, ndims(buf)))
-
 
 """
     prepare_input_occ!(ansatz, addr, x_cpu_buffer) -> x_cpu_buffer

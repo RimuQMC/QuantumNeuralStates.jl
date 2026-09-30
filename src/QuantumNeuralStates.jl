@@ -26,6 +26,7 @@ include("./layers/layernorm.jl")
 include("./layers/dense.jl")
 include("./layers/conv.jl")
 include("./layers/pool.jl")
+include("./input_encoding.jl")
 include("./chain.jl")
 include("./backpropagation/back_dense.jl")
 include("./backpropagation/back_conv.jl")
@@ -90,7 +91,7 @@ export run_training_loop
 include("./nn_create.jl")
 export build_model
 
-
+export nchannels, nsites, NoEncoding, OccupationEncoding, MomentumEncoding
 export Chain, Dense, Conv, Pool
 export NoPad, Periodic, Zeros # padding structs
 export JacobianBuffer, make_buffers, back_jacobian!, back!

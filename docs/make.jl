@@ -20,6 +20,7 @@ makedocs(;
     pages=[
         "Guide" => "index.md",
         "User Documentation" => [
+            "Input Encodings" => "input.md",
             "Neural Networks" => "neuralnetworks.md",
             "Variational Monte Carlo" => "vmc.md",
             "Neural Ansatz" => "ansatz.md",
