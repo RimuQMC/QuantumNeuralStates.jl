@@ -26,10 +26,10 @@ and importance sampling.
                 evaluation. Needs to be manually set, see [`MeanField`](@ref).
 * `truncation`: can be used for input space truncation. See [`TruncationBuffer`](@ref).
 * `neuron_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. See
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`neuron_statistics`](@ref).
 * `jacobian_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. see
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`jacobian_statistics`](@ref).
 
 # Example
@@ -128,10 +128,13 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     # safe check of ansatz_type and number of model outputs
     @assert (ansatz_type.num_outputs == size(last(model.layers).z, 1)) "" * 
             "Number of outputs in model (neural network) does not correspond with ansatz_type!"
+    model.enc isa NoEncoding &&
+    error("NeuralAnsatz needs an encoding that maps Fock states to network inputs " *
+          "(OccupationEncoding or MomentumEncoding); NoEncoding is for plain NN use")
 
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
-    x_cpu_buffer = zeros(Float32, dim, batch_size)
+    x_cpu_buffer = zeros(Float32, size(model.x)[1:end-1]..., batch_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
 
     nn_output = model(x_cpu_buffer)
@@ -188,39 +191,66 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
                 meanfield, trun, neuron_statistics, jacobian_statistics)
 end
 
-"""
-    prepare_input!(ansatz, addr, x_cpu_buffer) -> ansatz.x_cpu_buffer
+function Base.show(io::IO, ::MIME"text/plain", a::NeuralAnsatz)
+    rows = (
+        "hamiltonian" => _typename(a.hamiltonian),
+        "ansatz type" => _typename(a.ansatz_type) * "()",
+        "input scale" => string(_funcname(a.input_scale_func),
+                                         ", max_norm = ", repr(a.max_norm)),
+        "multi-forward buffer" => _flag_mem(a.multi_forward_buffer),
+        "mean field" => _flag_mem(a.meanfield),
+        "truncation" => sprint(print, a.truncation),
+        "total memory estimate" => _fmt_bytes(memory_estimate(a)),
+    )
+    w = maximum(length ∘ first, rows)
 
-Converts Rimu input notation `addr` into Array{Float32} as input for Neural Network
-`ansatz.x_cpu_buffer`. It uses `Rimu.onr()` function for collecting the 
-occupation number configurations. It manages all batch sizes.
-"""
-function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        if na.max_norm === nothing
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) #.+ 0.1f0
-        else
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) .* na.normalisation #.+ 0.1f0
-        end
-        return x_cpu_buffer
+    print(io, "NeuralAnsatz")
+    for (k, v) in rows
+        print(io, "\n  ", rpad(k * ":", w + 1), " ", v)
     end
 end
+
+"""
+    prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer) -> x_cpu_buffer
+    prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer) -> x_cpu_buffer
+
+Write the scaled occupation numbers `input_scale_func(onr(addr)) * normalisation`
+into the occupation channel of `x_cpu_buffer` (shape of the `Chain` input).
+A single `addr` is written into every batch column; a vector `addrs` fills one
+column per address.
+
+Internally the buffer is viewed as `buf[m, c, b]` (site, channel, sample), so
+the same code serves Dense and Conv inputs of any dimension. Only channel
+`occupation_channel(enc)` is written here; all other channels are built on the
+device by [`encode!`](@ref) inside [`prepare_chain_input!`](@ref).
+"""
+function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x_cpu_buffer, ndims(x_cpu_buffer))
+    buf = reshape(x_cpu_buffer, M, C, B)
+    ch  = occupation_channel(enc)
+    f, s = na.input_scale_func, na.normalisation
+
+    o = onr(addr)
+    length(o) == M ||
+        error("onr(addr) has $(length(o)) entries, encoding expects $M sites")
+    @views buf[:, ch, :] .= f.(Float32.(o)) .* s      # length-M vector → every column
+    return x_cpu_buffer
+end
 function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        # Each column is one address from batch 
-        if na.max_norm === nothing
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) #.+ 0.1f0
-            end
-        else
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) .* na.normalisation #.+ 0.1f0 # norm here is 1/norm corrected
-            end
-        end
-        return x_cpu_buffer
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x_cpu_buffer, ndims(x_cpu_buffer))
+    length(addrs) <= B ||
+        error("got $(length(addrs)) addresses but the buffer has only $B columns")
+
+    buf = reshape(x_cpu_buffer, M, C, B)
+    ch  = occupation_channel(enc)
+    f, s = na.input_scale_func, na.normalisation
+
+    @inbounds for (b, addr) in enumerate(addrs)
+        @views buf[:, ch, b] .= f.(Float32.(onr(addr))) .* s   # one column per address
     end
+    return x_cpu_buffer
 end
 
 """

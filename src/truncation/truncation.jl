@@ -48,6 +48,10 @@ function TruncationBuffer(H, k::Int; type::Symbol=:center, metric::Symbol=:l1)
     return TruncationBuffer(k, type, metric, dims, keep, mask)
 end
 
+Base.show(io::IO, t::TruncationBuffer) =
+    print(io, "TruncationBuffer(k = ", t.k, ", type = ", repr(t.type),
+              ", metric = ", repr(t.metric), ")")
+
 """
     grid_dims(H)
 

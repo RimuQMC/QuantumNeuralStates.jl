@@ -24,26 +24,34 @@ const SCALE_FUNCTIONS = Dict(
 Updates all parameters in `chain` given a flat parameter update vector `θ_new` of size (p,).
 
 # Arguments
-
 * `ansatz`: Wave-function ansatz, [`NeuralAnsatz`](@ref). See also [`Chain`](@ref)
-* `jac`: Jacobian buffer which holds `jac.ranges` information about mapping of flatten parameter
+* `jac`: [`JacobianBuffer`](@ref) which holds `jac.ranges` information about mapping of flatten parameter
     vector to each `chain` layer.
 * `θ_new`: flatten parameter vector with new updated weights after optimisation step.
-
 """
 function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
     chain = ansatz.model
     amplitude_output = view(last(chain.layers).z, 1, :)
     ansatz.logψ_centering = maximum(amplitude_output)
-    # println("logψ centering: ", ansatz.logψ_centering)
 
-    for (layer, r) in zip(chain.layers, jac.ranges)
-        layer.W .= reshape(view(θ_new, r.W), size(layer.W))
-        layer.b .= view(θ_new, r.b)
-        if !isnothing(r.γ)
-            layer.layer_norm.γ .= reshape(view(θ_new, r.γ), size(layer.layer_norm.γ))
-            layer.layer_norm.β .= reshape(view(θ_new, r.β), size(layer.layer_norm.β))
-        end
+    map((layer, r) -> _set_params!(layer, θ_new, r), chain.layers, jac.ranges)
+    return nothing
+end
+
+"""
+    _set_params!(layer, θ, r::LayerRange)
+
+Copy `layer`'s slice of the flat parameter vector `θ` (given by `r`) into
+`layer.W`/`layer.b` (and `layer.layer_norm.γ`/`β` if present). No-op for
+`FreeLayer`s (no parameters). Used by [`update!`](@ref).
+"""
+_set_params!(::FreeLayer, θ, r) = nothing            # no parameters
+function _set_params!(layer::ParametricLayer, θ, r::LayerRange)
+    layer.W .= reshape(view(θ, r.W), size(layer.W))
+    layer.b .= view(θ, r.b)
+    if !isnothing(r.γ)
+        layer.layer_norm.γ .= reshape(view(θ, r.γ), size(layer.layer_norm.γ))
+        layer.layer_norm.β .= reshape(view(θ, r.β), size(layer.layer_norm.β))
     end
     return nothing
 end
@@ -140,4 +148,24 @@ how close I want to be careful around zero and return safe value.
 @inline function safe_denom(x::T, epsilon::T) where T
     ax = abs(x)
     return ax < epsilon ? copysign(epsilon, x) : x
+end
+
+"""
+    select_device()
+
+This function check what GPU package was used in script, and return its
+GPU() function (`mtl()` - Metal, `cu()` - CUDA). If no GPU backend was 
+loaded it returns `identity()` - CPU.
+"""
+function select_device()
+    if isdefined(Main, :CUDA) && Main.CUDA.functional()
+        @info "CUDA (cu) was loaded for GPU computations"
+        return Main.CUDA.cu
+    elseif isdefined(Main, :Metal) && Main.Metal.functional()
+        @info "Metal (mtl) was loaded for GPU computations"
+        return Main.Metal.mtl
+    else
+        @info "No functional GPU backend found, using CPU"
+        return identity
+    end
 end
