@@ -1,5 +1,7 @@
 #using NNlib
 
+@inline _oftf(x, y) = oftype(float(x), y)
+
 relu_deriv(x::T)     where T<:Real = x > zero(T) ? one(T) : zero(T)
 sigmoid_deriv(x::T)  where T<:Real = (s = sigmoid(x); s * (one(T) - s))
 tanh_deriv(x::T)     where T<:Real = one(T) - tanh(x)^2
@@ -14,12 +16,33 @@ gelu_deriv(x::T) where T<:Real = (c = T(sqrt(2/π));
                                   T(0.5) * (one(T) + th) +
                                   T(0.5) * x * (one(T) - th*th) * c * (one(T) + T(0.134145) * x*x))
 
-# Dictionary mapping of activation functions and their derivatives
+
+@inline function gelu_fast(x::Real) # not in NNlib
+    c = _oftf(x, 0.7978845608028654)   # √(2/π)
+    α = _oftf(x, 0.044715)
+    h = _oftf(x, 0.5)
+    u = c * x * (1 + α * x * x)
+    return h * x * (1 + tanh_fast(u))
+end
+
+@inline function gelu_fast_deriv(x::Real)
+    c  = _oftf(x, 0.7978845608028654)  # √(2/π)
+    α  = _oftf(x, 0.044715)
+    h  = _oftf(x, 0.5)
+    x2 = x * x
+    u  = c * x * (1 + α * x2)
+    th = tanh_fast(u)
+    return h * (1 + th) + h * x * (1 - th * th) * c * (1 + 3 * α * x2)
+end
+
 """
     ACT_DERIV
 
 This directory holds mapping of activation functions to its derivatives.
 Both activations and derivatives can be defined here if needed.
+
+# Note
+`gelu` and `gelu_fast` are not supported on `Metal` GPUs.
 """
 const ACT_DERIV = Dict(
     tanh => tanh_deriv,
@@ -29,4 +52,5 @@ const ACT_DERIV = Dict(
     sigmoid_fast => sigmoid_fast_deriv,
     identity => identity_deriv,
     gelu => gelu_deriv,
+    gelu_fast => gelu_fast_deriv,
 )

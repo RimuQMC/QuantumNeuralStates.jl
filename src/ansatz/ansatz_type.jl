@@ -118,8 +118,8 @@ function log_psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
 end
 
 function psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
-    logψ, _ = log_psi!(ansatz, vals)
-    logψ = exp.(clamp.(logψ, -80f0, 80f0))
+    logψ, sign = log_psi!(ansatz, vals)
+    logψ = exp.(clamp.(logψ, -80f0, 80f0)) .* sign
     return logψ
 end
 

@@ -26,10 +26,10 @@ and importance sampling.
                 evaluation. Needs to be manually set, see [`MeanField`](@ref).
 * `truncation`: can be used for input space truncation. See [`TruncationBuffer`](@ref).
 * `neuron_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. See
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`neuron_statistics`](@ref).
 * `jacobian_statistics`: Can be activated with `true` (statistics would be print out to
-                terminal), or `filename::String` to be saved in external file. see
+                terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
                 [`jacobian_statistics`](@ref).
 
 # Example
@@ -48,9 +48,9 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
         network outputs, should looks like.
 * `hamiltonian`: hamiltonian defined in `Rimu`.
 * `model`: a neural network type of `Chain` used to evaluate the ansatz. 
-* `logψ_centering`: this is mean centering over batched `model` output connected with 
+* `logψ_centering`: this is max value centering over batched `model` output connected with 
                 wave-function amplitude - log|ψ| (fighting the gauge invariant for 
-                multiplication of wave-function with any number coefficient)
+                multiplication of wave-function with arbitrary number coefficient)
 * `x_cpu_buffer`: pre-allocated `Float32` buffer for batched network input.
 * `addrs_buffer`: dynamically filled buffer of addresses, used during
                 Rimu FCIQMC importance sampling.
@@ -128,10 +128,13 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     # safe check of ansatz_type and number of model outputs
     @assert (ansatz_type.num_outputs == size(last(model.layers).z, 1)) "" * 
             "Number of outputs in model (neural network) does not correspond with ansatz_type!"
+    model.enc isa NoEncoding &&
+    error("NeuralAnsatz needs an encoding that maps Fock states to network inputs " *
+          "(OccupationEncoding or MomentumEncoding); NoEncoding is for plain NN use")
 
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
-    x_cpu_buffer = zeros(Float32, dim, batch_size)
+    x_cpu_buffer = zeros(Float32, size(model.x)[1:end-1]..., batch_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
 
     nn_output = model(x_cpu_buffer)
@@ -188,38 +191,88 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
                 meanfield, trun, neuron_statistics, jacobian_statistics)
 end
 
-"""
-    prepare_input!(ansatz, addr, x_cpu_buffer) -> ansatz.x_cpu_buffer
+function Base.show(io::IO, ::MIME"text/plain", a::NeuralAnsatz)
+    rows = (
+        "hamiltonian" => _typename(a.hamiltonian),
+        "ansatz type" => _typename(a.ansatz_type) * "()",
+        "input scale" => string(_funcname(a.input_scale_func),
+                                         ", max_norm = ", repr(a.max_norm)),
+        "multi-forward buffer" => _flag_mem(a.multi_forward_buffer),
+        "mean field" => _flag_mem(a.meanfield),
+        "truncation" => sprint(print, a.truncation),
+        "total memory estimate" => _fmt_bytes(memory_estimate(a)),
+    )
+    w = maximum(length ∘ first, rows)
 
-Converts Rimu input notation `addr` into Array{Float32} as input for Neural Network
-`ansatz.x_cpu_buffer`. It uses `Rimu.onr()` function for collecting the 
-occupation number configurations. It manages all batch sizes.
-"""
-function prepare_input!(na::NeuralAnsatz, addr, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        if na.max_norm === nothing
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) #.+ 0.1f0
-        else
-            x_cpu_buffer .= na.input_scale_func.(Float32.(onr(addr))) .* na.normalisation #.+ 0.1f0
-        end
-        return x_cpu_buffer
+    print(io, "NeuralAnsatz")
+    for (k, v) in rows
+        print(io, "\n  ", rpad(k * ":", w + 1), " ", v)
     end
 end
-function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        # Each column is one address from batch 
-        if na.max_norm === nothing
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) #.+ 0.1f0
-            end
-        else
-            @inbounds for i in eachindex(addrs)
-                col = @view x_cpu_buffer[:, i]
-                col .= (na.input_scale_func.(Float32.(onr(addrs[i])))) .* na.normalisation #.+ 0.1f0 # norm here is 1/norm corrected
-            end
-        end
-        return x_cpu_buffer
+
+
+"""
+    prepare_input!(na::NeuralAnsatz, addr, x) -> x
+    prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x) -> x
+
+Write the scaled occupation numbers `input_scale_func(onr(addr)) * normalisation`
+into the occupation channel of the input buffer `x` (shape of the `Chain` input).
+A single `addr` fills every column; a vector `addrs` fills one column per address.
+
+Runs as a KernelAbstractions kernel on the device of `x`:
+* CPU: `x` an `Array`, `addrs` a `Vector`
+* GPU: `x` a device array (e.g. `model.x`), `addrs` a device array of addresses
+
+Addresses must be isbits for GPU use, and `input_scale_func` must compile on the
+device. Columns beyond `length(addrs)` are left untouched.
+"""
+function prepare_input!(na::NeuralAnsatz, addr, x)
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x, ndims(x))
+    num_modes(addr) == M ||
+        error("address has $(num_modes(addr)) modes, encoding expects $M sites")
+
+    buf = reshape(x, M, C, B)
+    backend = KernelAbstractions.get_backend(buf)
+    _prepare_input_single_kernel!(backend)(buf, addr, occupation_channel(enc),
+                                           na.input_scale_func, na.normalisation;
+                                           ndrange = B)
+    KernelAbstractions.synchronize(backend)
+    return x
+end
+function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
+    enc = na.model.enc
+    M, C, B = nsites(enc), nchannels(enc), size(x, ndims(x))
+    length(addrs) <= B ||
+        error("got $(length(addrs)) addresses but the buffer has only $B columns")
+    num_modes(eltype(addrs)) == M ||
+        error("addresses have $(num_modes(eltype(addrs))) modes, encoding expects $M sites")
+    isempty(addrs) && return x
+
+    buf = reshape(x, M, C, B)
+    backend = KernelAbstractions.get_backend(buf)
+    _prepare_input_kernel!(backend)(buf, addrs, occupation_channel(enc),
+                                    na.input_scale_func, na.normalisation;
+                                    ndrange = length(addrs))
+    KernelAbstractions.synchronize(backend)
+    return x
+end
+
+# vector of addresses: column b gets addrs[b]
+@kernel function _prepare_input_kernel!(buf, @Const(addrs), ch::Int, f, s)
+    b = @index(Global, Linear)                 # this thread's sample
+    o = onr(addrs[b])                          # occupations of sample b (SVector)
+    for m in 1:length(o)
+        buf[m, ch, b] = f(Float32(o[m])) * s
+    end
+end
+
+# single address: every column gets the same occupations
+@kernel function _prepare_input_single_kernel!(buf, addr, ch::Int, f, s)
+    b = @index(Global, Linear)                 # this thread's column
+    o = onr(addr)
+    for m in 1:length(o)
+        buf[m, ch, b] = f(Float32(o[m])) * s
     end
 end
 
@@ -258,12 +311,14 @@ If dispatched with `multi_forward_buffer` it allows for computation in
 arbitrary batch size. See [`MultiForwardBuffer`](@ref).
 """
 function compute_logψ(na::NeuralAnsatz, addr)
-    x = prepare_input!(na, addr, na.x_cpu_buffer)
+    # x = prepare_input!(na, addr, na.x_cpu_buffer)
+    x = prepare_input!(na, addr, na.model.x)
     logψ = na.model(x)
     return logψ
 end
 function compute_logψ(na::NeuralAnsatz, addr, multi_forward_buffer)
-    x = prepare_input!(na, addr, multi_forward_buffer.x_cpu)
+    # x = prepare_input!(na, addr, multi_forward_buffer.x_cpu)
+    x = prepare_input!(na, addr, multi_forward_buffer.x)
     logψ = na.model(x, multi_forward_buffer)
     return logψ
 end
@@ -289,50 +344,247 @@ function compute_mflogψ!(na::NeuralAnsatz, addr, z, multi_forward_buffer)
     return nothing
 end
 
+# """
+#     multi_compute_logψ!(ansatz, flat_addrs_m, flat_vals_m)
+#
+# This function allows evaluation of inputs bigger than batch size. It calls
+# [`compute_logψ`](@ref) (and possibly [`compute_mflogψ!`](@ref)) in loop to accomodate
+# inputs exceeding batch size and accumulates results into `flat_vals_m` array.
+#
+# The indexing of input `flat_addrs_m` vector and accumulated result `flat_vals_m` is 
+# preserved.
+#
+# # Variables
+#
+# * `ansatz`: structure of [`NeuralAnsatz`](@ref).
+# * `flat_addrs_m`: vector of addresses in Rimu format. Can have arbitrary length (
+#     usually beyond batch size0
+# * `flat_vals_m`: the result of `logψ` computations are saved in this array which is dynamically
+#     sized.
+# """
 """
-    multi_compute_logψ!(ansatz, flat_addrs_m, flat_vals_m)
+    multi_compute_logψ!(ansatz, addrs_buf, vals_buf, offsets) -> vals
 
-This function allows evaluation of inputs bigger than batch size. It calls
-[`compute_logψ`](@ref) (and possibly [`compute_mflogψ!`](@ref)) in loop to accomodate
-inputs exceeding batch size and accumulates results into `flat_vals_m` array.
+This function evaluates the Neural Network on all valid off-diagonal addresses, with
+an arbitrary number of them. All valid off-diagonals are treated as one continuous stream, 
+which is cut into forward passes.
 
-The indexing of input `flat_addrs_m` vector and accumulated result `flat_vals_m` is 
-preserved.
+Each forward pass consists of:
+1. [`_prepare_input_stream_kernel!`](@ref) — fills the network input `xe` with the
+   occupations of the next `n` off-diagonals of the stream,
+2. the forward pass of the model,
+3. a contiguous copy of the `n` outputs into `vals`, in stream order.
+
+The outputs are stored packed, in stream order: column `g` of `vals` holds the outputs
+of stream position `g`. The valid part is `view(vals, :, 1:total)` with
+`total = last(offsets)`; everything beyond is unused capacity (dummies).
 
 # Variables
-
 * `ansatz`: structure of [`NeuralAnsatz`](@ref).
-* `flat_addrs_m`: vector of addresses in Rimu format. Can have arbitrary length (
-    usually beyond batch size0
-* `flat_vals_m`: the result of `logψ` computations are saved in this array which is dynamically
-    sized.
+* `addrs_buf`: [`GPUGrowRowBuffer`](@ref) holding off-diagonal addresses as `(K, B)`:
+    column `b` holds the off-diagonals spawned by parent address.
+* `vals_buf`: [`GPUGrowColumnBuffer`](@ref) for the network outputs `(n_out, capacity)`;
+    grown to at least `total` columns.
+* `offsets`: device vector of length `B`, the cumulative number of valid off-diagonals
+    per column (`cumsum` of the counts). Column `b` holds `offsets[b] - offsets[b-1]`
+    valid off-diagonals (with `offsets[0] = 0`).
+
+# Indices
+* `j`: column of the network input `xe` (and output `raw`) in the current forward
+    pass, `1 … n`. Every thread of a kernel handles one `j`.
+* `offset_current`: number of stream positions already processed by earlier passes
+    (`0, fwd, 2fwd, …`).
+* `g = offset_current + j`: global position in the stream of valid off-diagonals,
+    `1 … total`, continuous over all passes.
+* `b = _find_column(offsets, g)`: column of `addrs` that stream position `g` belongs
+    to (see [`_find_column`](@ref)).
+* `k = g - _column_start(offsets, b)`: row of that off-diagonal within column `b`
+    (see [`_column_start`](@ref)).
+
+`b` and `k` are only needed to read the address `addrs[k, b]`; the output position is
+`g` itself.
+
+## Note
+The forward size `fwd` is the number of columns of the input buffer: the
+[`MultiForwardBuffer`](@ref) `buffer_size` if present, otherwise the model `batch` size.
 """
-function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, 
-                             vals_buf::GPUGrowBuffer)
-    total = length(flat_addrs_m)
-    flat_vals_m = ensure_capacity!(vals_buf, total) # view into vals_buf.data, sized exactly to `total`
+function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
+                             vals_buf::GPUGrowColumnBuffer, offsets)
+    addrs = addrs_buf.data                                  # (K, B)
+    total = isempty(offsets) ? 0 : Int(maximum(offsets))   # = last(offsets)
+    vals  = ensure_capacity!(vals_buf, total)               # (n_out, capacity)
+    n_out = size(vals, 1)
 
-    buf   = ansatz.multi_forward_buffer
-    batch = buf !== nothing ? buf.buffer_size : ansatz.model.batch
-    n_chunks = cld(total, batch)
+    model = ansatz.model
+    mfb   = ansatz.multi_forward_buffer
+    xe, x = mfb !== nothing ? (mfb.xe, mfb.x) : (model.xe, model.x)
+    fwd   = size(x, ndims(x))                               # columns of one forward pass
 
-    for c in 1:n_chunks
-        i_start = (c-1) * batch + 1
-        i_end   = min(c * batch, total)
-        n_real  = i_end - i_start + 1
-        tmp_addrs = view(flat_addrs_m, i_start:i_end)
+    ch, f, s = occupation_channel(model.enc), ansatz.input_scale_func, ansatz.normalisation
+    backend  = KernelAbstractions.get_backend(vals)
 
-        raw = buf !== nothing ? compute_logψ(ansatz, tmp_addrs, buf) : compute_logψ(ansatz, tmp_addrs)
+    for offset_current in 0:fwd:(total - 1)
+        n = min(fwd, total - offset_current)                # valid off-diagonals in this pass
 
-        if ansatz.meanfield !== nothing
-            mfresult = buf !== nothing ? compute_mflogψ(ansatz, tmp_addrs, buf) : compute_mflogψ(ansatz, tmp_addrs)
-            raw .= raw .+ mfresult
-        end
+        _prepare_input_stream_kernel!(backend)(xe, addrs, offsets, offset_current,
+                                               ch, f, s; ndrange = n)
 
-        copyto!(view(flat_vals_m, :, i_start:i_end), view(raw, :, 1:n_real))
+        raw = mfb !== nothing ? model(x, mfb) : model(x)    # forward pass
+
+        # raw columns 1:n → vals columns offset_current+1 : offset_current+n
+        # copyto!(view(vals, :, offset_current+1 : offset_current+n), view(raw, :, 1:n))
+        copyto!(vals, n_out * offset_current + 1, raw, 1, n_out * n)
     end
-    return flat_vals_m
+    KernelAbstractions.synchronize(backend)
+    return vals
 end
+
+"""
+    _prepare_input_stream_kernel!(xe, addrs, offsets, offset_current, ch, f, s)
+
+Kernel that fills the network input for one forward pass. Launched with `ndrange = n`,
+one thread per input column `j`. Thread `j` takes stream position
+`g = offset_current + j`, finds its slot `(k, b)` with [`_find_column`](@ref) and
+[`_column_start`](@ref), and writes the scaled occupations
+`f(onr(addrs[k, b])) * s` into `xe[:, ch, j]`.
+
+# Variables
+* `xe`: network input viewed as `xe[m, c, j]` (site, channel, batch position).
+* `addrs`: off-diagonal addresses `(K, B)`.
+* `offsets`: cumulative valid counts per column, length `B`.
+* `offset_current`: stream positions processed by earlier passes.
+* `ch`: occupation channel of the input encoding.
+* `f`, `s`: `input_scale_func` and normalisation of the [`NeuralAnsatz`](@ref).
+
+See [`multi_compute_logψ!`](@ref) for the meaning of the indices.
+"""
+@kernel function _prepare_input_stream_kernel!(xe, @Const(addrs), @Const(offsets),
+                                               offset_current::Int, ch::Int, f, s)
+    j = @index(Global, Linear)                  # column of xe in this forward pass
+    g = offset_current + j                      # position in the stream
+    b = _find_column(offsets, g)                # column of addrs
+    k = g - _column_start(offsets, b)           # off-diagonal within column b
+    o = onr(addrs[k, b])
+    for m in 1:length(o)
+        xe[m, ch, j] = f(Float32(o[m])) * s
+    end
+end
+
+"""
+    _find_column(offsets, g) -> b
+
+Return the column `b` of `addrs` that stream position `g` belongs to: the first `b`
+with `offsets[b] ≥ g`, i.e. the first column that has not ended before position `g`.
+Uses a binary search. Columns without valid off-diagonals have
+the same `offsets` value as their predecessor and are skipped automatically.
+"""
+@inline function _find_column(offsets, g)
+    lo, hi = 1, length(offsets)
+    while lo < hi
+        mid = (lo + hi) ÷ 2
+        if offsets[mid] < g
+            lo = mid + 1
+        else
+            hi = mid
+        end
+    end
+    return lo
+end
+
+"""
+    _column_start(offsets, b) -> Int
+
+Number of stream positions before column `b`: the end of the previous column,
+`offsets[b - 1]`, or `0` for the first column. Column `b` occupies stream positions 
+`_column_start(offsets, b) + 1 : offsets[b]`, so the row of position `g` within its 
+column is `k = g - _column_start(offsets, b)`.
+"""
+@inline _column_start(offsets, b) = b == 1 ? 0 : Int(offsets[b - 1])
+# function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
+#                              vals_buf::GPUGrowColumnBuffer, offsets)
+#     addrs = addrs_buf.data                          # (K, B)
+#     K, B  = size(addrs)
+#     vals  = ensure_capacity!(vals_buf, K * B)       # (n_out, capacity)
+#
+#     mfb   = ansatz.multi_forward_buffer
+#     model = ansatz.model
+#     xe, x = mfb !== nothing ? (mfb.xe, mfb.x) : (model.xe, model.x)
+#     batch = size(x, ndims(x))
+#
+#     n_cols = batch ÷ K                              # addrs columns per forward pass
+#     n_cols >= 1 || error("forward batch ($batch) smaller than K ($K) - num_offdiagonals.")
+#     n_chunks = cld(B, n_cols)
+#
+#     backend = KernelAbstractions.get_backend(vals)
+#     ch, f, s = occupation_channel(model.enc), ansatz.input_scale_func, ansatz.normalisation
+#
+#     for c in 1:n_chunks
+#         i_start = (c - 1) * n_cols + 1
+#         i_end   = min(c * n_cols, B)
+#         n_real  = i_end - i_start + 1               # columns of addrs in this chunk
+#
+#         _prepare_input_chunk_kernel!(backend)(xe, addrs, offsets, i_start, ch, f, s;
+#                                               ndrange = n_real)
+#         KernelAbstractions.synchronize(backend)
+#
+#         raw = mfb !== nothing ? model(x, mfb) : model(x)          # forward pass
+#
+#         _store_outputs_chunk_kernel!(backend)(vals, raw, offsets, i_start, K;
+#                                               ndrange = n_real)
+#         KernelAbstractions.synchronize(backend)
+#     end
+#     return vals
+# end
+# # writes the valid off-diagonals of addrs[:, b] into xe
+# @kernel function _prepare_input_chunk_kernel!(xe, @Const(addrs), @Const(offsets),
+#                                               i_start::Int, ch::Int, f, s)
+#     n = @index(Global, Linear)                      # position in the chunk
+#     b = i_start + n - 1                             # column of addrs
+#     K = size(addrs, 1)
+#     for k in 1:offsets[b]                           # valid off-diagonals only
+#         o = onr(addrs[k, b])
+#         for m in 1:length(o)
+#             xe[m, ch, (n - 1) * K + k] = f(Float32(o[m])) * s
+#         end
+#     end
+# end
+# # copies the outputs of the valid off-diagonals back to vals
+# @kernel function _store_outputs_chunk_kernel!(vals, @Const(raw), @Const(offsets),
+#                                               i_start::Int, K::Int)
+#     n = @index(Global, Linear)                      # position in the chunk
+#     b = i_start + n - 1                             # column of addrs
+#     for k in 1:offsets[b]
+#         for o in 1:size(raw, 1)
+#             vals[o, (b - 1) * K + k] = raw[o, (n - 1) * K + k]
+#         end
+#     end
+# end
+# function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, 
+#                              vals_buf::GPUGrowBuffer)
+#     total = length(flat_addrs_m)
+#     flat_vals_m = ensure_capacity!(vals_buf, total) # view into vals_buf.data, sized exactly to `total`
+#
+#     buf   = ansatz.multi_forward_buffer
+#     batch = buf !== nothing ? buf.buffer_size : ansatz.model.batch
+#     n_chunks = cld(total, batch)
+#
+#     for c in 1:n_chunks
+#         i_start = (c-1) * batch + 1
+#         i_end   = min(c * batch, total)
+#         n_real  = i_end - i_start + 1
+#         tmp_addrs = view(flat_addrs_m, i_start:i_end)
+#
+#         raw = buf !== nothing ? compute_logψ(ansatz, tmp_addrs, buf) : compute_logψ(ansatz, tmp_addrs)
+#
+#         if ansatz.meanfield !== nothing
+#             mfresult = buf !== nothing ? compute_mflogψ(ansatz, tmp_addrs, buf) : compute_mflogψ(ansatz, tmp_addrs)
+#             raw .= raw .+ mfresult
+#         end
+#
+#         copyto!(view(flat_vals_m, :, i_start:i_end), view(raw, :, 1:n_real))
+#     end
+#     return flat_vals_m
+# end
 # function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, flat_vals_m::AbstractArray)    
 #     empty!(flat_vals_m) 
 #     if ansatz.multi_forward_buffer !== nothing

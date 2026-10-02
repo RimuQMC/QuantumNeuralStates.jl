@@ -1,6 +1,7 @@
 # using Metal
 # using Statistics
 # using KernelAbstractions
+
 """
     MomentumBuffer(p::Int, ansatz; β=0.9f0)
 
@@ -70,22 +71,22 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
     T = Float32
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
-    O_mean      = similar(l.b, p)
-    g           = similar(l.b, N)
-    w           = similar(l.b, N)
-    p_cg        = similar(l.b, N)
-    Ap          = similar(l.b, N)
-    Δθ          = fill!(similar(l.b, p), zero(T))
+    O_mean = similar(l.b, p)
+    g = similar(l.b, N)
+    w = similar(l.b, N)
+    p_cg = similar(l.b, N)
+    Ap = similar(l.b, N)
+    Δθ = fill!(similar(l.b, p), zero(T))
     if !velocity
-        vel     = false
-        moment  = nothing
+        vel = false
+        moment = nothing
     else
-        vel     = true 
-        moment  = MomentumBuffer(p, ansatz; β=β)
+        vel = true 
+        moment = MomentumBuffer(p, ansatz; β=β)
     end
 
-    V       = typeof(O_mean)
-    X       = typeof(moment)
+    V = typeof(O_mean)
+    X = typeof(moment)
     return minSRBuffer{T,V,X}(O_mean, g, Δθ, vel, moment, w, p_cg, Ap)
 end
 

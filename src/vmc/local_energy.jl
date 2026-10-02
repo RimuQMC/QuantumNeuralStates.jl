@@ -1,29 +1,6 @@
 # using KernelAbstractions
 # using Statistics
 
-@kernel function _local_energy_kernel!(E_locs, diag_ham, offsets, flat_Hmn, 
-                                m_logψ, m_sign::Number, n_logψ, n_sign::Number)
-    b = @index(Global)
-    @inbounds begin
-        total = 0f0
-        for i in (offsets[b]+1):offsets[b+1]
-            total += flat_Hmn[i] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign * m_sign
-        end
-        E_locs[b] = diag_ham[b] + total
-    end
-end
-@kernel function _local_energy_kernel!(E_locs, diag_ham, offsets, flat_Hmn, 
-                                m_logψ, m_sign::AbstractArray, n_logψ, n_sign::AbstractArray)
-    b = @index(Global)
-    @inbounds begin
-        total = 0f0
-        for i in (offsets[b]+1):offsets[b+1]
-            total += flat_Hmn[i] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign[b] * m_sign[i]
-        end
-        E_locs[b] = diag_ham[b] + total
-    end
-end
-
 """
     calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
 
@@ -52,71 +29,65 @@ neural network which can looks like a node.
 function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign, m_logψ, m_sign)
     calculate_local_energy!(ansatz.ansatz_type, ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign)
 end
-function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer, 
+function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
                                  n_logψ, n_sign, m_logψ, m_sign)
-    # flat_vals_m = vmc_buf.flat_vals_m
-    diag_ham    = vmc_buf.diag_ham
-    flat_Hmn    = vmc_buf.flat_offdiag_ham
-
-    diag_ham_gpu = vmc_buf.diag_ham_gpu         #####     
-    flat_Hmn_gpu = vmc_buf.flat_offdiag_ham_gpu #####
-    offsets_gpu = vmc_buf.offsets_gpu           #####
-
-    E_locs      = vmc_buf.E_locs
-
-    copyto!(diag_ham_gpu, diag_ham)
-    Hmn_gpu = ensure_capacity!(flat_Hmn_gpu, length(flat_Hmn))
-    copyto!(Hmn_gpu, flat_Hmn)
-
-
-    # vals_m = reshape(flat_vals_m, ansatz.ansatz_type.num_outputs, :)
-    # m_logψ, m_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_m)
+    ham_diag = vmc_buf.ham_diag                 # (B,)   device
+    ham_offdiag = vmc_buf.ham_offdiag_buf.data     # (K, B) device
+    offsets = vmc_buf.offsets                  # (B,)   device, cumulative
+    E_locs = vmc_buf.E_locs
+    median_cpu = vmc_buf.median_cpu
 
     backend = KernelAbstractions.get_backend(E_locs)
-    _local_energy_kernel!(backend)(E_locs, diag_ham_gpu, offsets_gpu, Hmn_gpu, m_logψ, m_sign, 
-                                   n_logψ, n_sign; ndrange=ansatz.model.batch)
+    _local_energy_kernel!(backend)(E_locs, ham_diag, offsets, ham_offdiag, m_logψ, m_sign,
+                                   n_logψ, n_sign; ndrange = ansatz.model.batch)
     KernelAbstractions.synchronize(backend)
 
-    elocs_clamping!(E_locs)
+    elocs_clamping!(E_locs, median_cpu)
 end
-# function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign)
-#     # Taking neccessary stuff from metropolis buffer
-#     flat_vals_m = vmc_buf.flat_vals_m   # (total,)
-#     diag_ham = vmc_buf.diag_ham         # (B,)
-#     flat_Hmn = vmc_buf.flat_offdiag_ham # (total,)
-#     walker_idx = vmc_buf.walker_idx     # (total,)
-#     E_locs = vmc_buf.E_locs             # (B,)
-#     vals_n_cpu = vmc_buf.vals_n_cpu     # (1, B)
-#
-#     vals_m = reshape(flat_vals_m, ansatz.ansatz_type.num_outputs, :)
-#     m_logψ, m_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_m)
-#
-#     # E_loc(n) = H_nn + Σ_m H_mn * ψ(m) / ψ(n)
-#     n_logψ_expanded  = view(n_logψ, walker_idx) # (total,): mapping (B,) -> (total,)
-#     if n_sign isa Number 
-#         n_sign_expanded  = n_sign # if there is no sign for chosen ansatz
-#     else
-#         n_sign_expanded  = view(n_sign, walker_idx) # (total,): mapping (B,) -> (total,)
-#     end
-#     m_logψ .= flat_Hmn .* exp.(clamp.(m_logψ .- n_logψ_expanded, -80f0, 80f0)) .* n_sign_expanded .* m_sign # (total,)
-#     # m_logψ .= clamp.(m_logψ .- n_logψ_expanded, -80f0, 80f0)
-#     # m_logψ .= flat_Hmn .* exp.(m_logψ) .* n_sign_expanded .* m_sign # (total,)
-#     offdiag_contribs = m_logψ
-#     E_locs .= diag_ham .+ scatter(+, offdiag_contribs, walker_idx, dstsize=(ansatz.model.batch,))
-#
-#     elocs_clamping!(E_locs)
-# end
 
+@kernel function _local_energy_kernel!(E_locs, ham_diag, offsets, ham_offdiag,
+                                m_logψ, m_sign::Number, n_logψ, n_sign::Number)
+    b = @index(Global)
+    @inbounds begin
+        start = _column_start(offsets, b)
+        stop  = Int(offsets[b])
+        total = 0f0
+        for i in (start + 1):stop
+            k = i - start                          # row of ham_offdiag in column b
+            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign * m_sign
+        end
+        E_locs[b] = ham_diag[b] + total
+    end
+end
+@kernel function _local_energy_kernel!(E_locs, ham_diag, offsets, ham_offdiag,
+                                m_logψ, m_sign::AbstractArray, n_logψ, n_sign::AbstractArray)
+    b = @index(Global)
+    @inbounds begin
+        start = _column_start(offsets, b)
+        stop  = Int(offsets[b])
+        total = 0f0
+        for i in (start + 1):stop
+            k = i - start                          # row of ham_offdiag in column b
+            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign[b] * m_sign[i]
+        end
+        E_locs[b] = ham_diag[b] + total
+    end
+end
 
 """
-    elocs_clamping!(E_locs) -> E_locs
+    elocs_clamping!(E_locs, median_cpu) -> E_locs
 
 Function that do median based clamping of local energies. This is needed especially 
 when we are near nodes of the wave-function.
+
+# Note
+`median` functions are not GPU supported and CPU calculations are around 100x faster
+then GPU on arrays of size(E_locs).
 """
-function elocs_clamping!(E_locs)
+function elocs_clamping!(E_locs, median_cpu)
     # Carefully clip E_locs spikes for smoothening E_locs
-    med = median(E_locs)
+    copyto!(median_cpu, E_locs)
+    med = median!(median_cpu)
     spike_window = max(50, 5 * abs(med))
     upper_bound = med + spike_window
     lower_bound = med - spike_window

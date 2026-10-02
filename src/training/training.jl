@@ -31,13 +31,13 @@ the previous one converges (or hits `max_epochs`).
 """
 function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                            savefile::String = "weights.txt", loadfile::String = "weights.txt",
-                           save::Bool   = true, load::Bool = false,
+                           save::Bool = true, load::Bool = false,
                            markovfile::String = "MarkovChain.txt" , markov::Bool = false)
 
     @info "Hilbert space dimension: $(@sprintf("%.3e", dimension(H)))"
 
     # --- initialise addresses ---------------------------------------
-    addrs_n = if isfile(loadfile) && load
+    addrs = if isfile(loadfile) && load
         x = load_master(ansatz, loadfile)
         [typeof(addr)(Tuple(col)) for col in eachcol(x)]
     else
@@ -46,16 +46,35 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         # this is prefered as the neural network randomly sample anyway at the 
         # beginning and also it is necessary for input truncation to work
     end
+    backend = KernelAbstractions.get_backend(ansatz.model.x)
+    addrs_n = KernelAbstractions.allocate(backend, eltype(addrs), ansatz.model.batch)
 
     if markov
         log_markov_chain(markovfile, addrs_n; start=true)
     end
 
     # --- shared buffers ---------------------------------------------
-    buffers = map(DenseBuffer, ansatz.model.layers)
+    buffers = make_buffers(ansatz.model)
     jac_buf = JacobianBuffer(ansatz, buffers)
     vmc_buf = VMCBuffer(ansatz, addr)
     n_params = length(jac_buf.θ)
+    @info "Neural Network parameters: $(n_params)"
+
+    total = memory_estimate((ansatz, buffers, jac_buf, vmc_buf))
+    @info "Total memory estimate: $(_fmt_bytes(total))"
+
+    # this is for more detailed memory print 
+    # parts = ("ansatz"   => ansatz,
+    #      "backprop" => buffers,
+    #      "jacobian" => jac_buf,
+    #      "vmc"      => vmc_buf)
+    #
+    # println("----- Memory estimate -----")
+    # for (name, obj) in parts
+    #     println("  ", rpad(name * ":", 10), _fmt_bytes(memory_estimate(obj)))
+    # end
+    # println("  ", rpad("total:", 10), _fmt_bytes(sum(memory_estimate ∘ last, parts)))
+    # println("---------------------------")
 
     all_E     = Float32[]
     all_E_err = Float32[]
@@ -79,7 +98,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 pidx, length(phases), phase.mode, phase.optimiser, phase.vmc_sampler, phase.max_epochs)
         println(repeat("─", 100))
         @printf("%-6s %-18s %-12s %-12s %-11s %-11s %-9s %-10s\n",
-                "Block", "E_block", "E_err", "Var_block", "|ΔE|", "|Δvar|", "Accept", "η (LR)")
+                "Block", "E", "E_err", "Var", "|ΔE|", "|Δvar|", "Accept", "η (LR)")
         println(repeat("─", 100))
 
         if phase.truncation !== nothing
@@ -97,6 +116,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         epoch       = 0
         converged   = false
         last_accept = NaN
+        phase_block_idx = 1
 
         η          = phase.η
         η_dec_idx  = isempty(phase.η_decrease) ? 0 : 1 # for decrease η criterion
@@ -156,11 +176,13 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                         isnan(diff_var) ? 0.0 : diff_var,
                         last_accept, η)
 
-                if vmc_buf.block_idx >= phase.block_min
+                # if vmc_buf.block_idx >= phase.block_min
+                if phase_block_idx >= phase.block_min
                     converged = check_stop(phase.stop, E_hist, var_hist,
                                            last_accept, phase.patience)
                 end
                 vmc_buf.block_idx += 1
+                phase_block_idx += 1
             end
         end # epoch loop
 

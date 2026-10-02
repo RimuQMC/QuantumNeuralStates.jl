@@ -99,7 +99,7 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
 
 
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.diag_ham
+    tmp = vmc_buf.ham_diag
     N = length(E_locs)
 
     # WEIGHTS CTMC / METROPOLIS ?
@@ -113,8 +113,9 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
     apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
 
     E_grads = adam_buf.E_grads # weighted loss gradients
-    copyto!(E_grads, tmp)
-    mul!(adam_buf.Δθ, jacobian_buf.J, E_grads, 1f0, 0f0)
+    # copyto!(E_grads, tmp)
+    # mul!(adam_buf.Δθ, jacobian_buf.J, E_grads, 1f0, 0f0)
+    mul!(adam_buf.Δθ, jacobian_buf.J, tmp, 1f0, 0f0)
     adam_step!(adam_buf, adam_buf.Δθ) 
 
     θ = jacobian_buf.θ

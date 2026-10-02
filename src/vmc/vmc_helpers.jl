@@ -9,114 +9,42 @@
 # inspiration: https://arxiv.org/pdf/2402.11014
 # ---------------------------------------------------------------------------
 """
-    VMCBuffer(ansatz, addr)
+    VMCBuffer(ansatz, addr; K_init = nothing)
 
-This structure holds all necessary intermediate variables for VMC steps. If 
-`ansatz` lives on GPU than it can work in CPU/GPU hybrid regime.
+This structure holds all intermediate variables of a VMC step. All buffers live on the
+device of `ansatz.model` (CPU or GPU), except `accepted` and the host scratch `median_cpu`.
 
 # Variables
-
 * `ansatz`: [`NeuralAnsatz`](@ref).
-* `addr`: Rimu type of address in Fock-state representation.
+* `addr`: Rimu address, used for the address type and to initialise address buffers.
 
+# Keyword Arguments
+* `K_init`: initial number of off-diagonal slots per sample. Defaults to the global
+    estimate `num_offdiagonals(ansatz.hamiltonian)` if available, otherwise to
+    `num_offdiagonals(ansatz.hamiltonian * addr)`. This is only a starting guess; the
+    off-diagonal buffers grow automatically if a sample has more connections.
 """
-# mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer, 
-#                          BAI <: AbstractArray{Int32}, BAF <: AbstractArray{Float32}}
-#     addrs_m::VA                         # (B,)      - spawned and chosen addresses
-#     flat_addrs_m::VA                    # (total,)  - all spawned addresses
-#     flat_vals_m::G        # (total*out_dim,) - outputs NN(flat_addrs_m)
-#     flat_offdiag_ham::Vector{Float32}   # (total,)  - H_mn values for all spawned addresses
-#     flat_offdiag_ham_gpu::G   # (total,)  - H_mn values for all spawned addresses
-#     diag_ham::Vector{Float32}           # (B,)      - H_nn values
-#     diag_ham_gpu::BAF          # (B,)      - H_nn values
-#     start::Bool                         # when to start E_loc calculations (after termalisation)
-#     offsets::Vector{Int32}                # (B+1,)    - number of offdiagonals from each spawning address
-#     offsets_gpu::BAI                # (B+1,)    - number of offdiagonals from each spawning address
-#     # vals_n_cpu::Matrix{Float64}         # (1, B)    - for transfer GPU -> CPU
-#     # vec_cpu::Vector{Float64}            # (B,)      - for transfer view on CPU
-#     E_locs::BAF             # (B,)      - calculated local energies, and GPU -> CPU usage
-#     accepted::Vector{Bool}              # (B,)      - boolean vector accept/reject
-#     # total_buf::Vector{Float64}          # (total,)  - helper for CTMC Proposal buffer
-#     block_idx::Int                      # keeps track of what iteration block I am in
-#     k_prop_buf::BAI
-#     k_prop_cpu::Vector{Int32}
-#     E_mean::BAF
-#     variance::BAF
-#     weights::BAF
-#     local_addrs::Vector{Vector{A}}       # (B,) - per-walker offdiagonal address scratch
-#     local_Hmn::Vector{Vector{Float32}}   # (B,) - per-walker offdiagonal H_mn scratch
-#     offdiag_counts::Vector{Int}          # (B,) - per-walker offdiagonal count   weights::BAF
-# end
-# function VMCBuffer(ansatz, addr)
-#     batch = ansatz.model.batch
-#     model_z = last(ansatz.model.layers).z
-#     out_dim = size(model_z, 1)
-#     A = typeof(addr)
-#     T = eltype(model_z)
-#     backend = KernelAbstractions.get_backend(model_z)
-#
-#     start = false
-#
-#     local_addrs = [Vector{A}() for _ in 1:batch]
-#     local_Hmn   = [Vector{Float32}() for _ in 1:batch]
-#     offdiag_counts = Vector{Int}(undef, batch)
-#
-#     addrs_m = Vector{A}(undef, batch)
-#     flat_addrs_m = Vector{A}(undef, 0)
-#     flat_vals_m = GPUGrowBuffer(backend, T, out_dim, batch)
-#     flat_offdiag_ham = Vector{T}(undef, 0)
-#     flat_offdiag_ham_gpu = GPUGrowBuffer(backend, T, 1, batch)
-#     diag_ham = Vector{T}(undef, batch)
-#     diag_ham_gpu = KernelAbstractions.allocate(backend, T, batch)
-#     offset = Vector{Int32}(undef, batch+1)
-#     offset_gpu = KernelAbstractions.allocate(backend, Int32, batch+1)
-#     # vals_n_cpu = Matrix{T}(undef, out_dim, batch)
-#     # vec_cpu = Vector{T}(undef, batch)
-#     E_locs = KernelAbstractions.allocate(backend, T, batch)
-#     accepted = Vector{Bool}(undef, batch)
-#     k_prop_buf = KernelAbstractions.allocate(backend, Int32, batch)
-#     k_prop_cpu = Vector{Int32}(undef, batch)
-#     E_mean = KernelAbstractions.allocate(backend, T, 1)
-#     variance = KernelAbstractions.allocate(backend, T, 1)
-#     weights = KernelAbstractions.allocate(backend, T, batch)
-#     # total_buf = Vector{T}(undef, 0)
-#     VA = typeof(addrs_m)
-#     BAF = typeof(diag_ham_gpu)
-#     BAI = typeof(offset_gpu)
-#     G = typeof(flat_vals_m)
-#     return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, flat_addrs_m, flat_vals_m, flat_offdiag_ham, 
-#                     flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offset, offset_gpu, 
-#                     E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights,
-#                     local_addrs, local_Hmn, offdiag_counts)
-# end
+mutable struct VMCBuffer{A, VA<:AbstractVector{A},
+                         GRA<:GPUGrowRowBuffer, GRF<:GPUGrowRowBuffer, GC<:GPUGrowColumnBuffer,
+                         BAI<:AbstractArray{Int32}, BAF<:AbstractArray{Float32}}
+    addrs_m::VA                     # (B,)    proposed addresses
+    addrs_offdiag_buf::GRA          # (K, B)  off-diagonal addresses
+    vals_offdiag_buf::GC            # (out_dim, n) network outputs of the off-diagonals
+    ham_offdiag_buf::GRF            # (K, B)  off-diagonal matrix elements
+    ham_diag::BAF                   # (B,)    diagonal elements H_nn
+    start::Bool                     # when to start E_loc calculations (after thermalisation)
+    offsets::BAI                    # (B,)    cumulative number of off-diagonals
+    E_locs::BAF                     # (B,)    local energies
+    accepted::Vector{Bool}          # (B,)
+    median_cpu::Vector{Float32}     # (B,)    host scratch for the E_loc median
 
-mutable struct VMCBuffer{A, VA <: AbstractVector{A}, G <: GPUGrowBuffer, 
-                         BAI <: AbstractArray{Int32}, BAF <: AbstractArray{Float32}}
-    addrs_m::VA                         # (B,)      - spawned and chosen addresses
-    new_addrs_n::VA                     # (B,)      - reshuffled starting addresses
-    flat_addrs_m::VA                    # (total,)  - all spawned addresses
-    flat_vals_m::G                      # (total*out_dim,) - outputs NN(flat_addrs_m)
-    flat_offdiag_ham::Vector{Float32}   # (total,)  - H_mn values for all spawned addresses
-    flat_offdiag_ham_gpu::G             # (total,)  - H_mn values for all spawned addresses
-    diag_ham::Vector{Float32}           # (B,)      - H_nn values (reshuffled)
-    diag_ham_gpu::BAF                   # (B,)      - H_nn values
-    start::Bool                         # when to start E_loc calculations (after thermalisation)
-    offsets::Vector{Int32}              # (B+1,)    - offsets, in reshuffled order
-    offsets_gpu::BAI
-    E_locs::BAF
-    accepted::Vector{Bool}
+    # outside VMC use
     block_idx::Int
-    k_prop_buf::BAI
-    k_prop_cpu::Vector{Int32}
-    E_mean::BAF
-    variance::BAF
-    weights::BAF
-    local_addrs::Vector{Vector{A}}       # (B,) per-walker offdiagonal address scratch
-    local_Hmn::Vector{Vector{Float32}}   # (B,) per-walker offdiagonal H_mn scratch
-    spinlock::Base.Threads.SpinLock      # protects the shared append!/push! section
+    E_mean::BAF                     # (1,)
+    variance::BAF                   # (1,)
+    weights::BAF                    # (B,)    CTMC weights
 end
-
-function VMCBuffer(ansatz, addr)
+function VMCBuffer(ansatz, addr; K_init = nothing)
     batch = ansatz.model.batch
     model_z = last(ansatz.model.layers).z
     out_dim = size(model_z, 1)
@@ -124,225 +52,177 @@ function VMCBuffer(ansatz, addr)
     T = eltype(model_z)
     backend = KernelAbstractions.get_backend(model_z)
 
+    K0 = if K_init !== nothing
+        K_init
+    else
+        try
+            num_offdiagonals(ansatz.hamiltonian)             # global estimate, if available
+        catch err
+            err isa MethodError || rethrow()                 # fall back only if the method is missing
+            num_offdiagonals(ansatz.hamiltonian * addr)      # always available: this column's count
+        end
+    end
+    K0 = max(Int(K0), 1)
+
+    # proposed addresses: initialised with a valid address, never garbage
+    addrs_m = KernelAbstractions.allocate(backend, A, batch)
+    fill!(addrs_m, addr)
+
+    # off-diagonals: (K, B), grow in K
+    addrs_offdiag_buf = GPUGrowRowBuffer(backend, A, K0, (batch,))
+    ham_offdiag_buf = GPUGrowRowBuffer(backend, T, K0, (batch,))
+
+    # network outputs of the off-diagonals: (out_dim, n), grow in n
+    vals_offdiag_buf = GPUGrowColumnBuffer(backend, T, (out_dim,), K0 * batch)
+
+    ham_diag = KernelAbstractions.zeros(backend, T, batch)
+    offsets = KernelAbstractions.zeros(backend, Int32, batch)
+    E_locs = KernelAbstractions.zeros(backend, T, batch)
+    accepted = Vector{Bool}(undef, batch)
+    median_cpu = Vector{Float32}(undef, batch)
+
+    E_mean = KernelAbstractions.zeros(backend, T, 1)
+    variance = KernelAbstractions.zeros(backend, T, 1)
+    weights = KernelAbstractions.zeros(backend, T, batch)
+
     start = false
 
-    addrs_m      = Vector{A}(undef, batch)
-    new_addrs_n  = Vector{A}()
-    flat_addrs_m = Vector{A}(undef, 0)
-    flat_vals_m  = GPUGrowBuffer(backend, T, out_dim, batch)
-    flat_offdiag_ham = Vector{T}(undef, 0)
-    flat_offdiag_ham_gpu = GPUGrowBuffer(backend, T, 1, batch)
-    diag_ham     = Vector{T}(undef, 0)      # will be filled via push! in reshuffled order — start empty
-    diag_ham_gpu = KernelAbstractions.allocate(backend, T, batch)
-    offsets      = Vector{Int32}(undef, 0)  # will be filled via push! — start empty
-    offset_gpu   = KernelAbstractions.allocate(backend, Int32, batch+1)
-    E_locs       = KernelAbstractions.allocate(backend, T, batch)
-    accepted     = Vector{Bool}(undef, batch)
-    k_prop_buf   = KernelAbstractions.allocate(backend, Int32, batch)
-    k_prop_cpu   = Vector{Int32}(undef, batch)
-    E_mean       = KernelAbstractions.allocate(backend, T, 1)
-    variance     = KernelAbstractions.allocate(backend, T, 1)
-    weights      = KernelAbstractions.allocate(backend, T, batch)
+    VA  = typeof(addrs_m)
+    GRA = typeof(addrs_offdiag_buf)
+    GRF = typeof(ham_offdiag_buf)
+    GC  = typeof(vals_offdiag_buf)
+    BAI = typeof(offsets)
+    BAF = typeof(ham_diag)
 
-    local_addrs = [Vector{A}() for _ in 1:batch]
-    local_Hmn   = [Vector{Float32}() for _ in 1:batch]
-    spinlock    = Base.Threads.SpinLock()
-
-    # pre-size AFTER all referenced vectors exist
-    sizehint!(new_addrs_n, batch)
-    sizehint!(diag_ham, batch)
-    sizehint!(offsets, batch + 1)
-    sizehint!(flat_addrs_m, batch * 20)        # tune based on typical total offdiagonal count
-    sizehint!(flat_offdiag_ham, batch * 20)
-
-    VA = typeof(addrs_m)
-    BAF = typeof(diag_ham_gpu)
-    BAI = typeof(offset_gpu)
-    G = typeof(flat_vals_m)
-
-    return VMCBuffer{A, VA, G, BAI, BAF}(addrs_m, new_addrs_n, flat_addrs_m, flat_vals_m, flat_offdiag_ham,
-                    flat_offdiag_ham_gpu, diag_ham, diag_ham_gpu, start, offsets, offset_gpu,
-                    E_locs, accepted, 1, k_prop_buf, k_prop_cpu, E_mean, variance, weights,
-                    local_addrs, local_Hmn, spinlock)
+    return VMCBuffer{A,VA,GRA,GRF,GC,BAI,BAF}(
+                addrs_m, addrs_offdiag_buf, vals_offdiag_buf, ham_offdiag_buf, ham_diag,
+                start, offsets, E_locs, accepted, median_cpu, 1, E_mean, variance, weights)
 end
 
-# @kernel function _state_proposal_kernel!(addrs_m, offsets, addrs_m_all, distro, rand_vals)
-#     b = @index(Global)
-#     @inbounds begin
-#         start = offsets[b]
-#         stop  = offsets[b+1]
-#
-#         total_w = 0f0
-#         for i in (start+1):stop
-#             total_w += abs(distro[i])
-#         end
-#
-#         target  = rand_vals[b] * total_w
-#         cumul   = 0f0
-#         k_prop  = stop                 # fallback: last element (numerical drift), same as CPU version
-#         for i in (start+1):stop
-#             cumul += abs(distro[i])
-#             if cumul >= target
-#                 k_prop = i
-#                 break
-#             end
-#         end
-#
-#         addrs_m[b] = addrs_m_all[k_prop]
-#     end
-# end
-# function state_proposal!(addrs_m, offsets, addrs_m_all, distro, rand_vals, batch)
-#     Random.rand!(rand_vals)
-#     backend = KernelAbstractions.get_backend(distro)
-#     _state_proposal_kernel!(backend)(addrs_m, offsets, addrs_m_all, distro, rand_vals; ndrange=batch)
-#     KernelAbstractions.synchronize(backend)
-#     return addrs_m
-# end
+Base.show(io::IO, ::MIME"text/plain", ::VMCBuffer) = print(io, "VMCBuffer")
 
 """
-    _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
+    state_proposal!(addrs_m, addrs_m_all, offsets, distro, rand_vals)
 
-This function propose new address in VMC sampler step. From the spawning address
-I collect all offdiagonal connections in `addrs_m_all` which are order using 
-`offsets` so it is clear what addresses belongs to what spawning source address.
-The new proposed address is then randomly picked from distribution `distro`.
+This function proposes a new address for every spawning address in a VMC sampler
+step. From each spawning address `b` all valid off-diagonal connections are collected
+in column `b` of `addrs_m_all`; the new address is drawn among them with probability
+proportional to `exp(distro)`, by inverse-CDF sampling. The chosen address is written
+directly into `addrs_m[b]` on the device.
+
+For numerical stability the maximum of `distro` over each parent's off-diagonals is
+subtracted before exponentiating, so every term is `≤ 1` and the largest is exactly `1`.
 
 # Variables
 
-* `offsets`: vector that holds ordering of spawning address to its offdiagonals.
-* `addrs_m_all`: flatten vector that holds all offdiagonals address from current batch.
-* `distro`: distribution vector. For example, if filled with `1` then the random draw is
-    uniform, if filled with corresponding offdiagonal hamiltonian matrix elements `H_mn` the
-    random draw is weighted by the elements.
-* `addrs_m`: buffer vector that holds all newly proposed states (size of batch).
-* `b`: batch size.
-"""
-@kernel function _state_proposal_kernel!(k_prop_out, offsets, distro, rand_vals)
-    b = @index(Global)
-    @inbounds begin
-        start = offsets[b]
-        stop = offsets[b+1]
+* `addrs_m`: (B,) device vector, receives the proposed address of each parent.
+* `addrs_m_all`: (K, B) off-diagonal addresses; column `b` belongs to parent `b`.
+* `offsets`: device vector of length `B`, cumulative number of valid off-diagonals per
+    parent. Parent `b` owns stream positions `_column_start(offsets, b) + 1 : offsets[b]`.
+* `distro`: log-weights of all valid off-diagonals, packed in stream order (length
+    `last(offsets)`). For example `logψ` of the off-diagonals for ψ-weighted proposals,
+    or zeros for uniform proposals.
+* `rand_vals`: (B,) device buffer, refilled with uniform random numbers in `[0, 1)`.
 
-        total_w = 0f0
-        for i in (start+1):stop
-            total_w += abs(exp(distro[i]))
+## Note
+A parent without off-diagonals leaves `addrs_m[b]` unchanged.
+"""
+function state_proposal!(addrs_m, addrs_m_all, offsets, distro, rand_vals)
+    Random.rand!(rand_vals)                     # in place, on the device
+    backend = KernelAbstractions.get_backend(rand_vals)
+    _state_proposal_kernel!(backend)(addrs_m, addrs_m_all, offsets, distro, rand_vals;
+                                     ndrange = length(addrs_m))
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+@kernel function _state_proposal_kernel!(addrs_m, @Const(addrs_m_all), @Const(offsets),
+                                         @Const(distro), @Const(rand_vals))
+    b     = @index(Global, Linear)              # parent
+    start = _column_start(offsets, b)           # stream positions before parent b
+    stop  = Int(offsets[b])                     # last stream position of parent b
+
+    if stop > start                             # parent has off-diagonals
+        # 1) maximum of this parent's log-weights
+        mx = -Inf32
+        for g in (start + 1):stop
+            mx = max(mx, distro[g])
         end
 
-        target = rand_vals[b] * total_w
-        cumul = 0f0
-        k = stop   # fallback
-        for i in (start+1):stop
-            cumul += abs(exp(distro[i]))
+        # 2) stabilized total: every term ≤ 1
+        tot = 0f0
+        for g in (start + 1):stop
+            tot += exp(distro[g] - mx)
+        end
+
+        # 3) inverse CDF on the same shifted terms
+        target = rand_vals[b] * tot
+        cumul  = 0f0
+        k      = stop - start                   # fallback: last off-diagonal (rounding)
+        for g in (start + 1):stop
+            cumul += exp(distro[g] - mx)
             if cumul >= target
-                k = i
+                k = g - start                   # row of addrs_m_all in column b
                 break
             end
         end
-
-        k_prop_out[b] = k # proposed indices
+        addrs_m[b] = addrs_m_all[k, b]
     end
 end
-function state_proposal!(addrs_m, addrs_m_all, offsets, distro, 
-                         rand_vals, k_prop_buf, k_prop_cpu, batch)
-    Random.rand!(rand_vals)
-
-    backend = KernelAbstractions.get_backend(distro)
-    _state_proposal_kernel!(backend)(k_prop_buf, offsets, distro, rand_vals; 
-                                     ndrange=batch)
-    KernelAbstractions.synchronize(backend)
-
-    copyto!(k_prop_cpu, k_prop_buf)
-    @inbounds for b in 1:batch
-        addrs_m[b] = addrs_m_all[k_prop_cpu[b]]
-    end
-    # return addrs_m
-    return nothing
-end
-# function _state_proposal!(offsets, addrs_m_all, distro, addrs_m, b)
-#     nonzero_count = offsets[b+1] - offsets[b]
-#
-#     # inverse CDF algorthm
-#     range_start = offsets[b]
-#     total_w = 0.0
-#     @inbounds for i in (offsets[b]+1):offsets[b+1] #range_start:length(distro)
-#         total_w += abs(distro[i])
-#     end
-#     target = rand() * total_w   # uniform in [0, total_w)
-#     cumul = 0.0
-#     k_prop = nonzero_count + 1   # fallback if numerical drift
-#     @inbounds for i in (offsets[b]+1):offsets[b+1] #range_start:length(distro)
-#         cumul += abs(distro[i])
-#         if cumul >= target
-#             k_prop = i - range_start + 1
-#             break
-#         end
-#     end
-#     addrs_m[b] = addrs_m_all[range_start + k_prop - 1]
-# end
 
 """
-    get_ctmc_weights!(distro, offsets, log_psi, batch)
+    get_ctmc_weights!(weights, log_distro, offsets, log_psi) -> weights
 
-This function calculates CTMC weights for batched approach.
-
-```math
-w_b = \\frac{|\\psi(n_b)|}{\\sum_m \\text{distro}(m_b)}
-```
-where `distro` is CDF probability distribution also used in VMC [`_state_proposal!`](@ref).
+This function calculates the normalised CTMC holding-time weights of the batch,
 
 ```math
-||\\psi||^2 = \\sum_s p(s) \\frac{|\\psi^2|}{p(s)} = \\sum_s p(s)*Z*\\frac{|\\psi(s)|}{R(s)} =
-Z * \\mathbf{E}_{s~p} \\big[ \\frac{|\\psi(s)|}{R(s)} \\big]
+w_b = \\frac{|\\psi(n_b)|}{\\sum_m |\\text{exp(log_distro)}(m_b)|}
 ```
+
+where the sum runs over the valid off-diagonals `m` of parent `b`, and `log_distro` holds
+`log_psi_m`, the same as used in [`state_proposal!`](@ref).
 
 # Variables
+* `weights`: (B,) device vector, receives the normalised weights (`Σ_b w_b = 1`).
+* `distro`: log amplitudes of all valid off-diagonals, packed in stream order
+    (length `last(offsets)`), same as in [`state_proposal!`](@ref).
+* `offsets`: device vector of length `B`, cumulative number of valid off-diagonals per
+    parent. Parent `b` owns stream positions `_column_start(offsets, b) + 1 : offsets[b]`.
+* `log_psi`: (B,) log amplitudes of the current samples, see [`log_psi!`](@ref).
 
-* `distro`: distribution same as in [`_state_proposal!`](@ref).
-* `offsets`: vector that maps offdiagonal spawns from its spawning source.
-* `log_psi`: holds log amplitudes of wave-function calculated using [`log_psi!`](@ref).
-* `batch`: batch number.
+## Note
+A parent without off-diagonals gets weight `0`.
 """
-function get_ctmc_weights!(distro, offsets, log_psi, weights, batch)
-    backend = KernelAbstractions.get_backend(distro)
-    _ctmc_weights_kernel!(backend)(log_psi, offsets, distro, weights; ndrange=batch)
+function get_ctmc_weights!(weights, log_distro, offsets, log_psi)
+    backend = KernelAbstractions.get_backend(weights)
+    _ctmc_weights_kernel!(backend)(weights, log_distro, offsets, log_psi;
+                                   ndrange = length(weights))
     KernelAbstractions.synchronize(backend)
 
-    sum_weights = sum(weights)
-    weights ./= sum_weights
-end
-@kernel function _ctmc_weights_kernel!(log_psi, offsets, distro, weights)
-    b = @index(Global)
-    @inbounds begin
-        total = 0f0
-        for i in (offsets[b]+1):offsets[b+1]
-            total += abs(exp(distro[i]))
-        end
-        weights[b] = exp(clamp(log_psi[b] - log(total + 1f-35), -80f0, 80f0))
-    end
+    lw_max = maximum(weights)                   # batch maximum of the log-weights
+    weights .= exp.(weights .- lw_max)          # every exponent ≤ 1
+    weights ./= sum(weights)
+    return weights
 end
 
-# function get_ctmc_weights!(distro, walker_idx, log_psi, tmp_vec, batch)
-#     NNlib.scatter!(+, tmp_vec, distro, walker_idx) # sum of |ψ(m)| offdiagonals
-#     log_psi .= exp.(clamp.(log_psi .- log.(tmp_vec .+ 1f-35), -80f0, 80f0))
-#     sum_weights = sum(log_psi)
-#     println(sum_weights)
-#     log_psi ./= sum_weights
-# end
-# function get_ctmc_weights!(distro, offsets, log_psi, batch)
-#     # inverse CDF algorithm
-#     sum_weights = 0.0
-#     for b in 1:batch
-#         total_w = 0.0
-#         @inbounds for i in (offsets[b]+1):offsets[b+1]
-#             total_w += abs(distro[i])
-#         end
-#         total_w = log(total_w + 1f-35)
-#         log_psi[b] = exp(clamp(log_psi[b] - total_w, -80f0, 80f0))
-#         sum_weights += log_psi[b]
-#     end
-#     println(sum_weights)
-#     # raw_norm = sum_weights / batch
-#     log_psi ./= sum_weights
-#
-#     # return raw_norm # if loss function cares about normalisation
-# end
+@kernel function _ctmc_weights_kernel!(weights, @Const(log_distro), @Const(offsets), @Const(log_psi))
+    b = @index(Global, Linear)
+    start = _column_start(offsets, b)
+    stop = Int(offsets[b])
+
+    if stop > start
+        # row maximum
+        mx = -Inf32
+        for g in (start + 1):stop
+            mx = max(mx, log_distro[g])
+        end
+        # stabilized sum: every term ≤ 1
+        tot = 0f0
+        for g in (start + 1):stop
+            tot += exp(log_distro[g] - mx)
+        end
+        weights[b] = log_psi[b] - (mx + log(tot))     # log w_b
+    else
+        weights[b] = -Inf32                           # no off-diagonals → weight 0
+    end
+end

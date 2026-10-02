@@ -1,6 +1,9 @@
 # QuantumNeuralStates
 
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://rimuqmc.github.io/QuantumNeuralStates.jl/dev/)
+[![Build Status](https://github.com/RimuQMC/QuantumNeuralStates.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/RimuQMC/QuantumNeuralStates.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage Status](https://coveralls.io/repos/github/RimuQMC/QuantumNeuralStates.jl/badge.svg?branch=main)](https://coveralls.io/github/RimuQMC/QuantumNeuralStates.jl?branch=main)
+
 
 Machine Learning package for representing quantum wave-function using Neural Networks.
 This package is designed to work in batched approach supporting GPU acceleration.
@@ -29,7 +32,7 @@ CPU)
 
 ```julia
 using Metal
-device = Metal.mtl
+device = select_device() # or manually Metal.mtl / CUDA.cu
 ```
 
 Next we set up the quantum system using `Rimu` interface. In this case 1D real Hubbard model.
@@ -41,21 +44,42 @@ addr = near_uniform(BoseFS{N,M})
 H = HubbardReal1D(addr; u=0.1)
 ```
 
-Now we define the Neural Network itself. We define fully-connected network with 3 hidden layers 
-with 100 neurons each, using `tanh` as activation function in all layers (except output). The
-output is one number which would represent the logarithm of the wave-function `log|ψ|` 
-(for now this is only configuration working).
+Now we define the Neural Network itself. 
+
+Firstly, we need to define what will be our input. The
+most default is `OccupationEncoding((dims..., H))` as pure occupation number input grid (the
+dimensions are defined by `dims...` Tuple). 
+
+Secondly, we define our network `Chain` as combination of 
+three convolutional layers `Conv` with kernel size `(3,)`, number of features in each layer `32`, 
+activation function `relu`, and `Periodic()` pedding. We will connect the `Conv` layers via
+`Pool` (output dimension reduction) to fully-connected layers `Dense`. Last layer's activation
+layer is `identity` with one output as we want to predict pure real wave-function (see more below). 
+This whole package is designed for different networks architecture and layer combinations.
 
 ```julia
 batch = 1024
-model  = build_model("FCNN", [M, 100, 100, 100, 1], tanh; batch=batch, device=device)
+act = relu
+pad = Periodic()
+input = OccupationEncoding((10,), H; device=device)
+model = Chain(input,
+              Conv((3,), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
+              Pool(:mean; device=device),
+              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              Dense(32=>1, identity; batch=batch, device=device); 
+              batch=batch, device=device)
 ```
 
 So far we only defined pure neural network. We need to define physical `ansatz` that would 
-represent the wave-function.
+represent the wave-function. The neural network output is one number which would represent 
+the logarithm of the wave-function `log|ψ|` (`LogPsi()` type of ansatz). The wave-function 
+ansatz can be customly defined as a subtype of abstract `AnsatzType` (there you can also 
+define how many outputs ansatz needs).
 
 ```julia
-ansatz  = NeuralAnsatz(H, model, batch)
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 ```
 
 Lastly, we need to define training parameters. This is done inside `TrainingPhase` struct,, which
@@ -67,10 +91,10 @@ phases = [
     TrainingPhase(
         mode       = :energy,
         optimiser  = :adam,
-        vmc_sampler= :ctmc,
+        vmc_sampler= :metropolis,
         stop       = StopBuffer(var_thr=1000),
         η          = 0.001f0,
-        skip       = [(1, 100), (300, 200)],
+        skip       = [(1, 50), (300, 200)],
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
@@ -79,12 +103,12 @@ phases = [
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
-        vmc_sampler= :metropolis,
+        vmc_sampler= :ctmc,
         stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
         η          = 0.001f0,
         λ          = 0.001f0,
-        skip       = [(1, 300)],
-        η_decrease = [(1, 0.1)],
+        skip       = [(1, 20)],
+        η_decrease = [(1, 0.1)], 
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
@@ -113,74 +137,54 @@ Example of training output is showed below. Both example code `example.jl` and o
 `example.log` can be find inside the package.
 
 ```
+❯ julia --project=. example.jl
 [ Info: Metal (mtl) was loaded for GPU computations
 [ Info: Hilbert space dimension: 1.257e+10
+[ Info: Neural Network parameters: 7489
+[ Info: Total memory estimate: 124.72 MiB
 ####################################################################################################
   Training with: 2 phase(s)
 ####################################################################################################
 
-  Phase 1/2  |  mode=energy,  optimiser=Adam,  vmc_sampler=ctmc,  max_epochs=500
+  Phase 1/2  |  mode=energy,  optimiser=adam,  vmc_sampler=metropolis,  max_epochs=500
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Block  E_block            E_err        Var_block    |ΔE|        |Δvar|      Accept    η (LR)
+Block  E                  E_err        Var          |ΔE|        |Δvar|      Accept    η (LR)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-1      -47.8532359710     2.83e+00     5.40e+02     0.00e+00    0.00e+00    1.0000    1.00e-03
-2      -56.3022441331     2.23e-01     3.55e+02     8.45e+00    1.85e+02    1.0000    1.00e-03
-3      -53.3723850992     1.72e-01     4.02e+02     2.93e+00    4.62e+01    1.0000    1.00e-03
-4      -55.5547171563     4.62e-01     3.90e+02     2.18e+00    1.18e+01    1.0000    1.00e-03
-5      -60.5617568794     3.03e-01     3.13e+02     5.01e+00    7.68e+01    1.0000    1.00e-03
-6      -62.7611369401     1.75e-01     2.59e+02     2.20e+00    5.44e+01    1.0000    1.00e-03
+1      -74.4890867922     8.48e-01     1.36e+02     0.00e+00    0.00e+00    0.9062    1.00e-03
+2      -79.7448248401     7.35e-01     8.66e+01     5.26e+00    4.95e+01    0.7861    1.00e-03
+3      -83.9752008669     1.73e-01     5.84e+01     4.23e+00    2.82e+01    0.7627    1.00e-03
+4      -85.8995638030     1.04e-01     2.58e+01     1.92e+00    3.25e+01    0.7549    1.00e-03
+5      -86.8934642452     4.70e-02     1.40e+01     9.94e-01    1.19e+01    0.7402    1.00e-03
+6      -87.2132227072     6.73e-02     1.46e+01     3.20e-01    6.59e-01    0.7500    1.00e-03
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-  Phase 1 converged after 60 epochs  |  E = -62.7611369401  |  var = 258.618232
+  Phase 1 converged after 60 epochs  |  E = -87.2132227072  |  var = 14.610711
 
-  Phase 2/2  |  mode=energy,  optimiser=minSR,  vmc_sampler=metropolis,  max_epochs=1000
+  Phase 2/2  |  mode=energy,  optimiser=minSR,  vmc_sampler=ctmc,  max_epochs=1000
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Block  E_block            E_err        Var_block    |ΔE|        |Δvar|      Accept    η (LR)
+Block  E                  E_err        Var          |ΔE|        |Δvar|      Accept    η (LR)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-1      -63.1419522000     2.50e-01     2.60e+02     0.00e+00    0.00e+00    1.0000    1.00e-03
-2      -63.7508881055     1.92e-01     2.46e+02     6.09e-01    1.43e+01    0.9961    1.00e-03
-3      -66.8734857670     5.90e-01     2.02e+02     3.12e+00    4.36e+01    0.9658    1.00e-03
-4      -71.9501744518     4.42e-01     1.39e+02     5.08e+00    6.31e+01    0.9297    1.00e-03
-5      -75.9178837119     3.33e-01     9.65e+01     3.97e+00    4.27e+01    0.9102    1.00e-03
-6      -78.2655909771     1.76e-01     7.05e+01     2.35e+00    2.60e+01    0.8916    1.00e-03
-7      -80.1230654082     1.38e-01     5.42e+01     1.86e+00    1.63e+01    0.8799    1.00e-03
-8      -81.5080602499     1.56e-01     4.46e+01     1.38e+00    9.65e+00    0.8691    1.00e-03
-9      -82.5799737426     9.93e-02     3.55e+01     1.07e+00    9.09e+00    0.8604    1.00e-03
-10     -83.4345847685     1.25e-01     2.88e+01     8.55e-01    6.69e+00    0.8447    1.00e-03
-11     -84.2566891700     4.77e-02     2.32e+01     8.22e-01    5.66e+00    0.8320    1.00e-03
-12     -84.8966058788     5.23e-02     1.80e+01     6.40e-01    5.19e+00    0.8262    1.00e-03
-13     -85.3472813466     6.19e-02     1.52e+01     4.51e-01    2.79e+00    0.8164    1.00e-03
-14     -85.8354602466     6.35e-02     1.15e+01     4.88e-01    3.71e+00    0.8203    1.00e-03
-15     -86.1609696466     3.01e-02     9.21e+00     3.26e-01    2.26e+00    0.8066    1.00e-03
-16     -86.4875634925     3.46e-02     7.54e+00     3.27e-01    1.67e+00    0.7959    1.00e-03
-17     -86.6725934233     3.27e-02     5.98e+00     1.85e-01    1.56e+00    0.7637    1.00e-03
-18     -86.8432985543     3.03e-02     5.39e+00     1.71e-01    5.88e-01    0.7891    1.00e-03
-19     -87.0150479434     1.72e-02     4.14e+00     1.72e-01    1.25e+00    0.7715    1.00e-03
-20     -87.1162615419     1.77e-02     3.50e+00     1.01e-01    6.36e-01    0.7832    1.00e-03
-21     -87.1985440490     1.75e-02     3.20e+00     8.23e-02    3.04e-01    0.7754    1.00e-03
-22     -87.3394108981     1.63e-02     2.50e+00     1.41e-01    6.94e-01    0.7754    1.00e-03
-23     -87.3677397087     1.07e-02     2.24e+00     2.83e-02    2.63e-01    0.7764    1.00e-03
-24     -87.4264866042     1.56e-02     2.03e+00     5.87e-02    2.16e-01    0.7646    1.00e-03
-25     -87.4849963348     1.22e-02     1.72e+00     5.85e-02    3.08e-01    0.7646    1.00e-03
-26     -87.5448764411     1.05e-02     1.68e+00     5.99e-02    3.45e-02    0.7676    1.00e-03
-27     -87.5742370170     8.16e-03     1.49e+00     2.94e-02    1.98e-01    0.7725    1.00e-03
-28     -87.6262748045     1.59e-02     1.23e+00     5.20e-02    2.53e-01    0.7637    1.00e-03
-29     -87.6587788828     1.54e-02     1.27e+00     3.25e-02    3.45e-02    0.7725    1.00e-03
-30     -87.6796887071     1.18e-02     1.32e+00     2.09e-02    4.99e-02    0.7715    1.00e-04
-31     -87.6860161456     1.42e-02     1.13e+00     6.33e-03    1.86e-01    0.7822    1.00e-04
-32     -87.6600091269     8.05e-03     1.12e+00     2.60e-02    8.08e-03    0.7520    1.00e-04
-33     -87.6809517815     9.37e-03     1.08e+00     2.09e-02    4.78e-02    0.7734    1.00e-04
-34     -87.6974189083     9.31e-03     1.07e+00     1.65e-02    6.55e-03    0.7656    1.00e-04
-35     -87.6953858379     1.02e-02     1.18e+00     2.03e-03    1.07e-01    0.7666    1.00e-04
-36     -87.7091876538     1.07e-02     1.01e+00     1.38e-02    1.70e-01    0.7812    1.00e-04
-37     -87.7241691339     7.18e-03     1.02e+00     1.50e-02    1.18e-02    0.7627    1.00e-04
-38     -87.6981728373     1.03e-02     1.16e+00     2.60e-02    1.44e-01    0.7705    1.00e-04
-39     -87.7056189033     1.00e-02     1.08e+00     7.45e-03    7.94e-02    0.7852    1.00e-04
-40     -87.7031125338     5.49e-03     1.05e+00     2.51e-03    2.90e-02    0.7666    1.00e-04
-41     -87.7081623556     1.31e-02     1.01e+00     5.05e-03    4.78e-02    0.7578    1.00e-04
-42     -87.7428437546     9.27e-03     9.34e-01     3.47e-02    7.11e-02    0.7568    1.00e-04
+7      -87.3900796444     3.78e-02     1.24e+01     0.00e+00    0.00e+00    1.0000    1.00e-03
+8      -87.6015161571     2.55e-02     5.09e+00     2.11e-01    7.27e+00    1.0000    1.00e-03
+9      -87.6873272386     1.42e-02     3.50e+00     8.58e-02    1.60e+00    1.0000    1.00e-03
+10     -87.7525259735     2.07e-02     3.06e+00     6.52e-02    4.32e-01    1.0000    1.00e-03
+11     -87.8307316718     1.34e-02     1.64e+00     7.82e-02    1.42e+00    1.0000    1.00e-03
+12     -87.8542562406     9.03e-03     1.36e+00     2.35e-02    2.88e-01    1.0000    1.00e-03
+13     -87.8614857501     1.08e-02     1.22e+00     7.23e-03    1.42e-01    1.0000    1.00e-03
+14     -87.8705928733     7.71e-03     1.10e+00     9.11e-03    1.19e-01    1.0000    1.00e-03
+15     -87.9021396178     1.10e-02     9.23e-01     3.15e-02    1.73e-01    1.0000    1.00e-04
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-  Phase 2 converged after 420 epochs  |  E = -87.7428437546  |  var = 0.934211
-[ Info: Saving (21401 weights, 1024 addresses) to ./weights/example.txt
+  Phase 2 converged after 90 epochs  |  E = -87.9021396178  |  var = 0.923180
+┌ Info: Saving (7489 weights, 1024 addresses, and identity input scaling function with norm of nothing) to
+└ ./weights/example.txt
 
+Final blocking analysis on 102400 E_locs samples
+CombinedBlockingResult{Float64}
+  mean = -87.9188 ± 0.008
+  with uncertainty of ± 0.000338377680949751
+  Combined from 100 blocking results. (k ∈ 1 … 7)
 ```
+
+Another training example is showned in `example2.jl`. In this example we train two output
+neural network with first output activation function `identity` and second `tanh`, using
+`LogPsiSignTanh()` ansatz. This ansatz allows to predict real wave-functions with signs.
 

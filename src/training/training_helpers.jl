@@ -11,6 +11,11 @@ mutable struct BlockStats
 end
 BlockStats() = BlockStats(Float32[], Float32[])
 
+"""
+    push_epoch!(bs::BlockStats, E, var)
+
+Record one epoch's energy and variance into `bs` [`BlockStats`](@ref).
+"""
 function push_epoch!(bs::BlockStats, E, var)
     push!(bs.energies,  E)
     push!(bs.variances, var)
@@ -60,6 +65,19 @@ Base.@kwdef struct StopBuffer
     var_thr::Union{Float32, Nothing} = nothing      # variance of 1 block
     accept_thr::Union{Float32, Nothing} = nothing   # acceptence of Markov Chain threshold
     require_all::Bool = false      # if ALL or ANY conditions needs to meet
+end
+
+function Base.show(io::IO, s::StopBuffer)
+    parts = String[]
+    for name in fieldnames(StopBuffer)
+        v = getfield(s, name)
+        if name === :require_all
+            v && push!(parts, "require_all=true")      # only if non-default
+        elseif v !== nothing
+            push!(parts, string(name, "=", v))
+        end
+    end
+    print(io, "StopBuffer(", join(parts, ", "), ")")
 end
 
 """
@@ -136,8 +154,6 @@ with different parameters.
 * `max_epochs`: maximum epochs in learning loop (default `1000`). If none of
         early-stopping conditions are met this is safe-check stop condition. 
 
-# Notes
-
 """
 Base.@kwdef struct TrainingPhase
     mode::Union{Symbol, Tuple} = :energy
@@ -154,7 +170,7 @@ Base.@kwdef struct TrainingPhase
     patience::Int = 3
     max_epochs::Int = 1_000
 end
-
+Base.show(io::IO, ::MIME"text/plain", ::TrainingPhase) = print(io, "TrainingPhase")
 
 """Return burnin for the current epoch using the skip schedule."""
 function _get_burnin(skip::Vector{Tuple{Int,Int}}, epoch::Int)

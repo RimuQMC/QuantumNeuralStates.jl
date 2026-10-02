@@ -131,74 +131,33 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
     # --- STEP 0: all needed variables from buffer ------------------------------------
     addrs_m = vmc_buf.addrs_m       
-    new_addrs_n = vmc_buf.new_addrs_n       
-    diag_ham = vmc_buf.diag_ham     
-    flat_addrs_all = vmc_buf.flat_addrs_m
-    flat_Hmn_all = vmc_buf.flat_offdiag_ham
-    offsets_all = vmc_buf.offsets
-    offsets_gpu = vmc_buf.offsets_gpu       
+    ham_diag = vmc_buf.ham_diag     
+    ham_offdiag_buf = vmc_buf.ham_offdiag_buf
+    addrs_offdiag_buf = vmc_buf.addrs_offdiag_buf
+    offsets = vmc_buf.offsets
     accepted = vmc_buf.accepted
     E_locs = vmc_buf.E_locs                     
-    flat_vals_m = vmc_buf.flat_vals_m       
-    k_prop_buf = vmc_buf.k_prop_buf         
-    k_prop_cpu = vmc_buf.k_prop_cpu     
+    vals_offdiag_buf = vmc_buf.vals_offdiag_buf
     weights = vmc_buf.weights               
-    local_addrs = vmc_buf.local_addrs
-    local_Hmn   = vmc_buf.local_Hmn
-    spinlock    = vmc_buf.spinlock
-    # local_addrs = vmc_buf.local_addrs
-    # local_Hmn = vmc_buf.local_Hmn
-    # offdiag_counts = vmc_buf.offdiag_counts
 
 
-    # collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_ham,
-    #                       hamiltonian, addrs_n, ansatz, local_addrs, local_Hmn, offdiag_counts, B)
-    collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_ham,
-                          hamiltonian, addrs_n, ansatz, local_addrs, local_Hmn,
-                          new_addrs_n, spinlock, B)
-
-    # # Due to uknown size of all possible offdiagonals I push! dynamically
-    # empty!(flat_addrs_all)
-    # empty!(flat_Hmn_all)
-    #
-    # # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
-    # offsets_all[1] = 0
-    # for b in 1:B
-    #     col           = hamiltonian * addrs_n[b]
-    #     diag_ham[b]   = diagonal_element(col)
-    #
-    #     for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-    #       # collect ALL off-diagonals for E_loc
-    #       if iszero(H_mn) # ignore zero off_diagonals elements
-    #           continue
-    #       end
-    #
-    #       # reject any offdiagonal that leaves the truncated subspace
-    #       occ_m = onr(addr_m)
-    #       if ansatz.truncation !== nothing && violates_truncation(occ_m, ansatz.truncation.mask)
-    #           continue
-    #       end
-    #
-    #       push!(flat_addrs_all, addr_m)
-    #       push!(flat_Hmn_all,   H_mn)
-    #     end
-    #     offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
-    # end
-
-    copyto!(offsets_gpu, offsets_all)
+    mask = ansatz.truncation === nothing ? nothing : ansatz.truncation.mask
+    collect_offdiagonals!(addrs_offdiag_buf, ham_offdiag_buf, ham_diag, offsets, 
+                          hamiltonian, addrs_n, mask)
 
     # --- STEP 2: NN forward on offdiagonals ----------------------------------------
-    flat_vals_m_view = multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
+    vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
+    total_offdiag = Int(maximum(offsets))
+    vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------
-    m_logψ, m_sign = log_psi!(ansatz, flat_vals_m_view)
+    m_logψ, m_sign = log_psi!(ansatz, vals_offdiag_valid)
 
-    state_proposal!(addrs_m, flat_addrs_all, offsets_gpu, m_logψ, E_locs, k_prop_buf, k_prop_cpu, B)
+    state_proposal!(addrs_m, addrs_offdiag_buf.data, offsets, m_logψ, E_locs) # E_locs buffer reuse
 
     # --- STEP 4: NN on starting addresses --------------------------------------------
-    # vals_n = compute_logψ(ansatz, addrs_n)
-    vals_n = compute_logψ(ansatz, new_addrs_n)
-    n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n)
+    vals_n = compute_logψ(ansatz, addrs_n)
+    n_logψ, n_sign = log_psi!(ansatz, vals_n)
     # copyto!(vals_n_cpu, vals_n)
     # if ansatz.meanfield !== nothing
     #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
@@ -213,17 +172,16 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
         calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign) # saved in E_locs
-        get_ctmc_weights!(m_logψ, offsets_gpu, n_logψ, weights, B) # saved in weights
+        get_ctmc_weights!(weights, m_logψ, offsets, n_logψ) # saved in weights
     end
 
-    # --- STEP 6: new sampled addresses - CPU ONLY ------------------------------------
+    # --- STEP 6: new sampled addresses -----------------------------------------------
     addrs_n  .= addrs_m # (B,) - reuse addrs_n as buffer
     new_addrs = addrs_n # reference for addrs_n 
-
     acc = 1
 
     # --- RETURNS ---------------------------------------------------------------------
-    # new_addrs: (B,) next walker positions -> CPU
+    # new_addrs: (B,) next walker positions -> CPU/GPU
     # E_locs:    (B,) local energies        -> CPU/GPU
     # weights:   sampler weights            -> CPU/GPU
     # grads_n:   (p,B) gradients            -> CPU/GPU
@@ -231,109 +189,78 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     return new_addrs, E_locs, weights, grads_n, acc
 end
 
-# @kernel function _collect_offdiagonals_kernel!(local_addrs, local_Hmn, counts, diag_ham,
-#                                                addrs_n, hamiltonian, truncation_mask, has_truncation)
-#     b = @index(Global)
-#     @inbounds begin
-#         col = hamiltonian * addrs_n[b]
-#         diag_ham[b] = diagonal_element(col)
-#
-#         empty!(local_addrs[b])
-#         empty!(local_Hmn[b])
-#
-#         for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-#             if iszero(H_mn)
-#                 continue
-#             end
-#
-#             occ_m = onr(addr_m)
-#             if has_truncation && violates_truncation(occ_m, truncation_mask)
-#                 continue
-#             end
-#
-#             push!(local_addrs[b], addr_m)
-#             push!(local_Hmn[b],   H_mn)
-#         end
-#
-#         counts[b] = length(local_addrs[b])   # read directly, no reassignment needed
-#     end
-# end
-#
-# function collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_ham,
-#                                 hamiltonian, addrs_n, ansatz, local_addrs, local_Hmn, counts, B)
-#     backend = CPU()
-#
-#     has_truncation = ansatz.truncation !== nothing
-#     truncation_mask = has_truncation ? ansatz.truncation.mask : nothing
-#
-#     _collect_offdiagonals_kernel!(backend, Threads.nthreads())(
-#                         local_addrs, local_Hmn, counts, diag_ham,
-#                         addrs_n, hamiltonian, truncation_mask, has_truncation; ndrange=B)
-#     KernelAbstractions.synchronize(backend)
-#
-#     # sequential merge — preserves walker order, offdiagonal order within a walker doesn't matter
-#     empty!(flat_addrs_all)
-#     empty!(flat_Hmn_all)
-#     offsets_all[1] = 0
-#     for b in 1:B
-#         append!(flat_addrs_all, local_addrs[b])
-#         append!(flat_Hmn_all,   local_Hmn[b])
-#         offsets_all[b+1] = offsets_all[b] + counts[b]
-#     end
-# end
+"""
+    collect_offdiagonals!(addrs_buf, hmn_buf, diag, offsets, hamiltonian, addrs_n, mask)
 
-@kernel function _collect_offdiagonals_kernel!(flat_addrs_all, flat_Hmn_all, new_addrs_n,
-                                               diag_ham, offsets_all, addrs_n, hamiltonian,
-                                               truncation_mask, has_truncation, spinlock,
-                                               local_addrs, local_Hmn)
-    b = @index(Global)
-    @inbounds begin
-        col = hamiltonian * addrs_n[b]
-        d = diagonal_element(col)
+Collect, on the device, the diagonal element and all valid off-diagonal connections of
+every address in `addrs_n`.
 
-        empty!(local_addrs[b])
-        empty!(local_Hmn[b])
+Column `b` of `addrs_buf.data` and `hmn_buf.data` receives the off-diagonal addresses and
+offdiagonal matrix elements of parent `b`; `diag[b]` its diagonal element; `offsets` the 
+cumulative sum of number of offdiagonals. Off-diagonals with a zero matrix element, and 
+(if `mask !== nothing`) those violating the truncation, are skipped.
 
-        for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-            if iszero(H_mn)
-                continue
+If any parent has more off-diagonals than the current number of rows `K` (in `addrs_buf` or
+`hmn_buf`), both row buffers are grown to fit the largest count and the collection is repeated, 
+so no connection is ever lost. The grown size is kept for later calls.
+
+# Variables
+* `addrs_buf`: [`GPUGrowRowBuffer`](@ref) of addresses, `(K, B)`.
+* `hmn_buf`: [`GPUGrowRowBuffer`](@ref) of Float32 matrix elements, `(K, B)`.
+* `diag`: (B,) receives the diagonal elements.
+* `offsets`: (B,) Int32 device vector, receives `cumsum(num_offdiagonals)`.
+* `hamiltonian`: Rimu Hamiltonian; has to be Float32/isbits compatible.
+* `addrs_n`: (B,) vector of the current addresses.
+* `mask`: truncation mask on the device, or `nothing` for no truncation.
+"""
+function collect_offdiagonals!(addrs_buf::GPUGrowRowBuffer, hmn_buf::GPUGrowRowBuffer,
+                               diag, offsets, hamiltonian, addrs_n, mask)
+    B = length(addrs_n)
+    B == 0 && return nothing
+    backend = KernelAbstractions.get_backend(diag)
+
+    while true
+        addrs_offdiag = addrs_buf.data          # (K, B)
+        hmn = hmn_buf.data                      # (K, B)
+        _collect_offdiagonals_kernel!(backend)(addrs_offdiag, hmn, diag, offsets,
+                                               hamiltonian, addrs_n, mask; ndrange = B)
+        KernelAbstractions.synchronize(backend)
+
+        kmax = Int(maximum(offsets))                    # largest true count
+        kmax <= size(addrs_offdiag, 1) && break         # everything fitted
+
+        ensure_capacity!(addrs_buf, kmax)               # grow K for both, then repeat
+        ensure_capacity!(hmn_buf, kmax)
+    end
+
+    cumsum!(offsets, offsets)                          # cumulative offsets, on the device
+    return nothing
+end
+
+# one thread per parent b: iterates the column H * addrs_n[b]
+@kernel function _collect_offdiagonals_kernel!(addrs_offdiag, hmn, diag, counts,
+                                               hamiltonian, @Const(addrs_n), mask)
+    b = @index(Global, Linear)              # parent
+    K = size(addrs_offdiag, 1)                    # rows available per parent
+    addr = addrs_n[b]
+    k = 0                                   # valid off-diagonals found
+
+    col = hamiltonian * addr
+    diag[b] = diagonal_element(col)
+
+    for (a2, v) in offdiagonals(col)
+        if !iszero(v) && !_skip_truncated(a2, mask)
+            k += 1
+            if k <= K                       # write only what fits array
+                addrs_offdiag[k, b] = a2
+                hmn[k, b] = v
             end
-            occ_m = onr(addr_m)
-            if has_truncation && violates_truncation(occ_m, truncation_mask)
-                continue
-            end
-            push!(local_addrs[b], addr_m)
-            push!(local_Hmn[b],   H_mn)
-        end
-
-        Base.lock(spinlock) do
-            append!(flat_addrs_all, local_addrs[b])
-            append!(flat_Hmn_all,   local_Hmn[b])
-            push!(new_addrs_n,  addrs_n[b])
-            push!(diag_ham, d)
-            push!(offsets_all, offsets_all[end] + length(local_addrs[b]))
         end
     end
+
+    counts[b] = Int32(k)            # always the true count
 end
 
-function collect_offdiagonals!(flat_addrs_all, flat_Hmn_all, offsets_all, diag_ham,
-                                hamiltonian, addrs_n, ansatz, local_addrs, local_Hmn,
-                                new_addrs_n, spinlock, B)
-    backend = CPU()
-    has_truncation = ansatz.truncation !== nothing
-    truncation_mask = has_truncation ? ansatz.truncation.mask : nothing
-
-    empty!(flat_addrs_all)
-    empty!(flat_Hmn_all)
-    empty!(new_addrs_n)
-    empty!(diag_ham)
-    empty!(offsets_all)
-    push!(offsets_all, Int32(0))   # seed — note Int32 to match offsets_all's eltype
-
-    _collect_offdiagonals_kernel!(backend, Threads.nthreads())(
-                flat_addrs_all, flat_Hmn_all, new_addrs_n,diag_ham, offsets_all, addrs_n, 
-                hamiltonian, truncation_mask, has_truncation, spinlock,local_addrs, local_Hmn; 
-                ndrange=B)
-    KernelAbstractions.synchronize(backend)
-end
-
+# truncation switch resolved by dispatch: with `nothing`
+@inline _skip_truncated(addr, ::Nothing) = false
+@inline _skip_truncated(addr, mask) = violates_truncation(onr(addr), mask)
