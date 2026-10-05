@@ -22,6 +22,10 @@ Machine Learning package designed to work with Rimu ([online](https://RimuQMC.gi
 """
 # QuantumNeuralStates
 
+function __init__()
+    default_logger()
+end
+
 include("./activations.jl")
 include("./layers/layers_helpers.jl")
 include("./layers/layernorm.jl")

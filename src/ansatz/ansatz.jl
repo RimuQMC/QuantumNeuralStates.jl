@@ -465,7 +465,7 @@ See [`multi_compute_logψ!`](@ref) for the meaning of the indices.
     b = _find_column(offsets, g)                # column of addrs
     k = g - _column_start(offsets, b)           # off-diagonal within column b
     o = onr(addrs[k, b])
-    for m in 1:length(o)
+    @inbounds for m in 1:length(o)
         xe[m, ch, j] = f(Float32(o[m])) * s
     end
 end
@@ -480,7 +480,7 @@ the same `offsets` value as their predecessor and are skipped automatically.
 """
 @inline function _find_column(offsets, g)
     lo, hi = 1, length(offsets)
-    while lo < hi
+    @inbounds while lo < hi
         mid = (lo + hi) ÷ 2
         if offsets[mid] < g
             lo = mid + 1
@@ -499,7 +499,7 @@ Number of stream positions before column `b`: the end of the previous column,
 `_column_start(offsets, b) + 1 : offsets[b]`, so the row of position `g` within its 
 column is `k = g - _column_start(offsets, b)`.
 """
-@inline _column_start(offsets, b) = b == 1 ? 0 : Int(offsets[b - 1])
+@inline _column_start(offsets, b) = b == 1 ? 0 : Int(@inbounds offsets[b - 1])
 # function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
 #                              vals_buf::GPUGrowColumnBuffer, offsets)
 #     addrs = addrs_buf.data                          # (K, B)
