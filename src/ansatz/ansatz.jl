@@ -1,5 +1,7 @@
 # using Gutzwiller
 # using Rimu
+# using KernelAbstractions
+# using GPUArraysCore: @allowscalar
 
 """
     NeuralAnsatz(ansatz_type, hamiltonian, model, batch_size; kwargs...) <: Gutzwiller.AbstractAnsatz             
@@ -344,24 +346,6 @@ function compute_mflogψ!(na::NeuralAnsatz, addr, z, multi_forward_buffer)
     return nothing
 end
 
-# """
-#     multi_compute_logψ!(ansatz, flat_addrs_m, flat_vals_m)
-#
-# This function allows evaluation of inputs bigger than batch size. It calls
-# [`compute_logψ`](@ref) (and possibly [`compute_mflogψ!`](@ref)) in loop to accomodate
-# inputs exceeding batch size and accumulates results into `flat_vals_m` array.
-#
-# The indexing of input `flat_addrs_m` vector and accumulated result `flat_vals_m` is 
-# preserved.
-#
-# # Variables
-#
-# * `ansatz`: structure of [`NeuralAnsatz`](@ref).
-# * `flat_addrs_m`: vector of addresses in Rimu format. Can have arbitrary length (
-#     usually beyond batch size0
-# * `flat_vals_m`: the result of `logψ` computations are saved in this array which is dynamically
-#     sized.
-# """
 """
     multi_compute_logψ!(ansatz, addrs_buf, vals_buf, offsets) -> vals
 
@@ -411,7 +395,7 @@ The forward size `fwd` is the number of columns of the input buffer: the
 function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
                              vals_buf::GPUGrowColumnBuffer, offsets)
     addrs = addrs_buf.data                                  # (K, B)
-    total = isempty(offsets) ? 0 : Int(maximum(offsets))   # = last(offsets)
+    total = Int(@allowscalar offsets[end])                  # = last(offsets)
     vals  = ensure_capacity!(vals_buf, total)               # (n_out, capacity)
     n_out = size(vals, 1)
 
@@ -464,7 +448,7 @@ See [`multi_compute_logψ!`](@ref) for the meaning of the indices.
     g = offset_current + j                      # position in the stream
     b = _find_column(offsets, g)                # column of addrs
     k = g - _column_start(offsets, b)           # off-diagonal within column b
-    o = onr(addrs[k, b])
+    o = onr(@inbounds addrs[k, b])
     @inbounds for m in 1:length(o)
         xe[m, ch, j] = f(Float32(o[m])) * s
     end
@@ -500,6 +484,9 @@ Number of stream positions before column `b`: the end of the previous column,
 column is `k = g - _column_start(offsets, b)`.
 """
 @inline _column_start(offsets, b) = b == 1 ? 0 : Int(@inbounds offsets[b - 1])
+
+
+
 # function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
 #                              vals_buf::GPUGrowColumnBuffer, offsets)
 #     addrs = addrs_buf.data                          # (K, B)

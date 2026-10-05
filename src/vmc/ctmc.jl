@@ -144,10 +144,12 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     mask = ansatz.truncation === nothing ? nothing : ansatz.truncation.mask
     collect_offdiagonals!(addrs_offdiag_buf, ham_offdiag_buf, ham_diag, offsets, 
                           hamiltonian, addrs_n, mask)
+    total_offdiag = isempty(offsets) ? 0 : Int(@allowscalar offsets[end])
+    total_offdiag == 0 && error("no valid off-diagonals for any walker: the sampler cannot move " *
+                                "(check the truncation mask)")
 
     # --- STEP 2: NN forward on offdiagonals ----------------------------------------
     vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
-    total_offdiag = Int(maximum(offsets))
     vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
 
     # --- STEP 3: Propose new addresses ---------------------------------------------

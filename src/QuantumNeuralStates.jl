@@ -9,6 +9,7 @@ using Printf
 using Statistics
 using Random
 using KernelAbstractions
+using GPUArraysCore: @allowscalar
 using Atomix
 using SpecialFunctions: loggamma
 
