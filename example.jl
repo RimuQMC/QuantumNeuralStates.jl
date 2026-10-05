@@ -31,18 +31,18 @@ act = relu
 pad = Periodic()
 input = OccupationEncoding((4,4), H; device=device)
 model = Chain(input,
-              Dense(nsites(input)*nchannels(input)=>32, tanh; batch=batch, device=device, layer_norm=true), 
-              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
-              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
-              # Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-              # Pool(:mean; device=device),
+              # Dense(nsites(input)*nchannels(input)=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              # Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              # Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              Pool(:mean; device=device),
               Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
               Dense(32=>1, identity; batch=batch, device=device); 
               batch=batch, device=device)
 
-ansatz = NeuralAnsatz(LogPsi(), H, model, batch; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES

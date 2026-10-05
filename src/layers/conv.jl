@@ -102,7 +102,8 @@ Map a raw (possibly padded) input index `i` to a real index in `1:L`, per
 `pad`. `0` means "skip this tap" (`Zeros`, out of range).
 """
 @inline _src(::NoPad, i, L) = i
-@inline _src(::Periodic, i, L) = mod1(i, L)
+@inline _src(::Periodic, i, L) = i < 1 ? i + L : (i > L ? i - L : i)
+# @inline _src(::Periodic, i, L) = mod1(i, L)
 @inline _src(::Zeros, i, L) = (1 <= i <= L) ? i : 0
 
 """
@@ -113,7 +114,8 @@ returns the candidate offset (wrapped into `0:L-1` for `Periodic`, unchanged
 otherwise).
 """
 @inline _tap_inv(::PadMode, t, L) = t
-@inline _tap_inv(::Periodic, t, L) = mod(t, L)      # 0-based, always in 0:L-1
+# @inline _tap_inv(::Periodic, t, L) = mod(t, L)      # 0-based, always in 0:L-1
+@inline _tap_inv(::Periodic, t, L) = t < 0 ? t + L : (t >= L ? t - L : t)      # 0-based, always in 0:L-1
 
 
 """
@@ -232,13 +234,11 @@ _signature(l::Conv{T,K,V,F,G,Z,PM}) where {T,K,V,F,G,Z,PM} =
 """
     _check_input(pad, input_size, K)
 
-Check that the input grid is at least as large as the kernel `K` when there is
-no padding (`NoPad`). No-op for other padding modes.
+Check that the input grid is at least as large as the kernel `K` in every spatial
+dimension.
 """
-_check_input(::NoPad, input_size, K) =
-    all(input_size .>= K) || error("input_size $input_size is smaller than kernel $K")
-_check_input(::PadMode, input_size, K) = nothing
-
+_check_input(::PadMode, input_size, K) =
+    all(input_size .>= K) || error("input grid $input_size is smaller than kernel $K")
 
 """
     forward(layer::Conv, x::AbstractArray) -> layer.z
@@ -278,7 +278,7 @@ function forward(layer::Conv, x::AbstractArray)
     backend = KernelAbstractions.get_backend(x)
     _conv_forward_kernel!(backend)(a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp; 
                           ndrange = size(a))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     apply_act!(layer, a, z)
     return z
 end
@@ -294,28 +294,58 @@ function forward(layer::Conv, x::AbstractArray, layerMulti)
     backend = KernelAbstractions.get_backend(x)
     _conv_forward_kernel!(backend)(layerMulti.a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp;
                                    ndrange = size(layerMulti.a))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     apply_act!(layer, layerMulti.a, layerMulti.a)
     return layerMulti.a
 end
 
-@kernel function _conv_forward_kernel!(a, x, W, b, stride::Int, pad, ::Val{Nsp}) where Nsp
-    idx = @index(Global, NTuple)  # (p..., c_out, n)
+@kernel function _conv_forward_kernel!(a, @Const(x), @Const(W), @Const(b), stride::Int,
+                                       pad, ::Val{Nsp}) where Nsp
+    idx   = @index(Global, NTuple)                 # (p..., c_out, n)
     c_out = idx[Nsp+1]
-    n = idx[Nsp+2]
+    n     = idx[Nsp+2]
+
+    Ls    = ntuple(d -> size(x, d), Val(Nsp))      # input grid
+    Ks    = ntuple(d -> size(W, d), Val(Nsp))      # kernel window
+    C_in  = size(x, Nsp+1)
+    plane = prod(Ls)                               # x: distance between channels
+    wk    = prod(Ks)                               # W: distance between input channels
+    x_n   = (n - 1) * plane * C_in                 # x: offset of sample n
+    w_c   = (c_out - 1) * wk * C_in                # W: offset of output channel c_out
 
     s = zero(eltype(a))
-    @inbounds for c_in in 1:size(x, Nsp+1)
-        for k in CartesianIndices(ntuple(d -> size(W, d), Val(Nsp)))
-            src = ntuple(d -> _src(pad, 
-                         (idx[d] - 1) * stride + k[d] - _padleft(pad, size(W, d)),
-                         size(x, d)), Val(Nsp))
-            if all(i -> i > 0, src)                 
-                s += x[CartesianIndex(src), c_in, n] * W[k, c_in, c_out]
-            end
+    @inbounds for k in CartesianIndices(Ks)        # spatial taps (outer)
+        src = ntuple(d -> _src(pad,
+                     (idx[d] - 1) * stride + k[d] - _padleft(pad, Ks[d]), Ls[d]), Val(Nsp))
+        all(i -> i > 0, src) || continue           # Zeros padding: skip tap
+        xi = x_n + LinearIndices(Ls)[src...]       # x[src..., 1, n]
+        wi = w_c + LinearIndices(Ks)[k]            # W[k, 1, c_out]
+        for _ in 1:C_in                            # channels (inner): only adds
+            s += x[xi] * W[wi]
+            xi += plane
+            wi += wk
         end
     end
     @inbounds a[idx...] = s + b[c_out]
 end
 
-
+# @kernel function _conv_forward_kernel!(a, x, W, b, stride::Int, pad, ::Val{Nsp}) where Nsp
+#     idx = @index(Global, NTuple)  # (p..., c_out, n)
+#     c_out = idx[Nsp+1]
+#     n = idx[Nsp+2]
+#
+#     s = zero(eltype(a))
+#     @inbounds for c_in in 1:size(x, Nsp+1)
+#         for k in CartesianIndices(ntuple(d -> size(W, d), Val(Nsp)))
+#             src = ntuple(d -> _src(pad, 
+#                          (idx[d] - 1) * stride + k[d] - _padleft(pad, size(W, d)),
+#                          size(x, d)), Val(Nsp))
+#             if all(i -> i > 0, src)                 
+#                 s += x[CartesianIndex(src), c_in, n] * W[k, c_in, c_out]
+#             end
+#         end
+#     end
+#     @inbounds a[idx...] = s + b[c_out]
+# end
+#
+#
