@@ -2,15 +2,14 @@ module QuantumNeuralStates
 
 using LinearAlgebra
 using NNlib: tanh, relu, sigmoid, identity, tanh_fast, sigmoid_fast, gelu
-using NNlib: scatter
 using Rimu
 using Gutzwiller
 using Printf
 using Statistics
 using Random
 using KernelAbstractions
-using GPUArraysCore: @allowscalar
 using Atomix
+using GPUArraysCore: @allowscalar
 using SpecialFunctions: loggamma
 
 const PACKAGE_NAME = "QuantumNeuralStates"

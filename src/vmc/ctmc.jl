@@ -1,3 +1,5 @@
+# using KernelAbstractions
+
 
 # """
 #     ctmc_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
@@ -266,3 +268,4 @@ end
 # truncation switch resolved by dispatch: with `nothing`
 @inline _skip_truncated(addr, ::Nothing) = false
 @inline _skip_truncated(addr, mask) = violates_truncation(onr(addr), mask)
+

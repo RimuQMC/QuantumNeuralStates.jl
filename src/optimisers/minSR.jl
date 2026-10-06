@@ -128,7 +128,7 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf,
     # wgpu = minSR_buf.weights
 
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.diag_ham_gpu
+    tmp = vmc_buf.ham_diag
 
     N = ansatz.model.batch
 

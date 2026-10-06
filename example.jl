@@ -28,7 +28,7 @@ H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 1, l = 6)
 # -------------------------------------------------------------------
 batch  = 1024
 act = relu
-pad = Periodic()
+pad = Zeros()
 input = OccupationEncoding((4,4), H; device=device)
 model = Chain(input,
               # Dense(nsites(input)*nchannels(input)=>32, tanh; batch=batch, device=device, layer_norm=true), 
@@ -50,15 +50,15 @@ ansatz = NeuralAnsatz(LogPsi(), H, model, batch)#; multiforward_buffer=batch*500
 phases = [
     TrainingPhase(
         mode       = :energy,
-        optimiser  = :adam,
+        optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(var_thr=1000),
+        stop       = StopBuffer(var_thr=1),
         η          = 0.001f0,
-        skip       = [(1, 20), (300, 200)],  # (epoch, B) → burnin B
+        skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 30,
+        max_epochs = 500,
     ),
     # TrainingPhase(
     #     mode       = :energy,
