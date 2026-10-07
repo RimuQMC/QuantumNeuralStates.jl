@@ -82,7 +82,7 @@ function forward(layer::Pool{T}, x::AbstractArray{T}) where T
 
     backend = KernelAbstractions.get_backend(x)
     _pool_forward_kernel!(backend)(z, x, layer.op; ndrange = (C_in, batch))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return z
 end
 
@@ -97,7 +97,7 @@ function forward(layer::Pool{T}, x::AbstractArray{T}, layerMulti) where T
     batch = size(x, ndims(x))
     backend = KernelAbstractions.get_backend(x)
     _pool_forward_kernel!(backend)(layerMulti.a, x, layer.op; ndrange = (C_in, batch))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return layerMulti.a
 end
 

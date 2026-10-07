@@ -134,6 +134,8 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     error("NeuralAnsatz needs an encoding that maps Fock states to network inputs " *
           "(OccupationEncoding or MomentumEncoding); NoEncoding is for plain NN use")
 
+    backend = KernelAbstractions.get_backend(model.x)
+
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
     x_cpu_buffer = zeros(Float32, size(model.x)[1:end-1]..., batch_size)
@@ -181,7 +183,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     end
     MF=typeof(meanfield)
 
-    trun = build_truncation(hamiltonian, truncation)
+    trun = build_truncation(hamiltonian, truncation, backend)
     TR=typeof(trun)
 
     NS=typeof(neuron_statistics); JS=typeof(jacobian_statistics)
@@ -239,7 +241,7 @@ function prepare_input!(na::NeuralAnsatz, addr, x)
     _prepare_input_single_kernel!(backend)(buf, addr, occupation_channel(enc),
                                            na.input_scale_func, na.normalisation;
                                            ndrange = B)
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return x
 end
 function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
@@ -256,7 +258,7 @@ function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
     _prepare_input_kernel!(backend)(buf, addrs, occupation_channel(enc),
                                     na.input_scale_func, na.normalisation;
                                     ndrange = length(addrs))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return x
 end
 
@@ -419,7 +421,7 @@ function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
         # copyto!(view(vals, :, offset_current+1 : offset_current+n), view(raw, :, 1:n))
         copyto!(vals, n_out * offset_current + 1, raw, 1, n_out * n)
     end
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return vals
 end
 

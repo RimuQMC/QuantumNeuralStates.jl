@@ -78,12 +78,12 @@ mutable struct Chain{L<:Tuple,X<:AbstractArray,XE<:AbstractArray,U<:AbstractArra
     enc::E
 end
 function Chain(enc::InputEncoding, layers...; device::Function = identity, batch::Int = 1)
-    l  = first(layers)
-    x  = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
+    l = first(layers)
+    x = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
     xe = reshape(x, nsites(enc), nchannels(enc), batch)       # same memory, [m, c, b]
     _check_device(enc, x)
 
-    z_out  = _forward_layers(layers, x)       # forward pass for all layers initialisation
+    z_out = _forward_layers(layers, x)       # forward pass for all layers initialisation
     z_last = similar(z_out)
 
     L, X, XE, U, F, E = typeof(layers), typeof(x), typeof(xe), typeof(z_last),

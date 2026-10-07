@@ -46,24 +46,20 @@ Structure meant for `minSR` optimiser, see [`compute_minSR_cg!`](@ref).
 It allows allocation-free, batched and GPU friendly evaluation of `minSR`.
 
 # Variables
-
 * `N`: batch size for  array dimensions.
 * `p`: total number of parameters in ansatz model, for array dimensions. 
 * `ansatz`: ansatz model that evaluates wave-function. See also [`NeuralAnsatz`](@ref).
  
 # Keyword Variables
-
 * `velocity`: boolean variable, if `true` that `minSR` optimiser will apply momentum
     smoothening. By default `false`. See also [`MomentumBuffer`](@ref).
 * `β`: also used with [`MomentumBuffer`](@ref).
 """
 mutable struct minSRBuffer{T,V<:AbstractVector{T},X}
     O_mean::V
-    g::V
     Δθ::V
     vel::Bool
     moment::X
-    weights::V
     p_cg::V
     Ap::V
 end
@@ -72,8 +68,6 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
     O_mean = similar(l.b, p)
-    g = similar(l.b, N)
-    w = similar(l.b, N)
     p_cg = similar(l.b, N)
     Ap = similar(l.b, N)
     Δθ = fill!(similar(l.b, p), zero(T))
@@ -87,13 +81,13 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
 
     V = typeof(O_mean)
     X = typeof(moment)
-    return minSRBuffer{T,V,X}(O_mean, g, Δθ, vel, moment, w, p_cg, Ap)
+    return minSRBuffer{T,V,X}(O_mean, Δθ, vel, moment, p_cg, Ap)
 end
 
 
 """
     compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, 
-                        minSR_buf, ansatz, mode, λ, weights)
+                        minSR_buf, ansatz, mode, λ, weights) -> Δθ
 
 Computes the minSR (Stochastic Reconfiguration) natural gradient step `Δθ` using 
 a matrix-free [`cg_solve!`](@ref).
@@ -121,49 +115,30 @@ function gradient, see [`apply_loss!`](@ref).
 function compute_minSR_cg!(E_mean, variance, jacobian_buf, 
                         vmc_buf, minSR_buf, ansatz, mode, λ, weights)
 
-    J = jacobian_buf.J
-    O_mean = minSR_buf.O_mean
-    # g = minSR_buf.g
-    Δθ = minSR_buf.Δθ
-    # wgpu = minSR_buf.weights
+    J      = jacobian_buf.J             # (p, N) raw Jacobian
+    O_mean = minSR_buf.O_mean           # (p,)
+    Δθ     = minSR_buf.Δθ               # (p,)
+    p_cg   = minSR_buf.p_cg
+    Ap     = minSR_buf.Ap
 
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.ham_diag
+    g      = vmc_buf.ham_diag           # reused buffer for the loss vector
 
-    N = ansatz.model.batch
+    mul!(O_mean, J, weights)            # O_mean = Σ_b w_b · J[:, b]
 
-    if weights === nothing
-        w = Float32(sqrt(1/N))     # uniform weights from Metropolis MC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
-    else
-        weights .= sqrt.(weights)
-        w = weights                # weights from CTMC
-        apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
-        # copyto!(wgpu, w)
-    end
+    weights .= sqrt.(weights)           # w ← √w
 
-    mean!(O_mean, J)        # (p,) in-place: calculate mean of J 
+    apply_loss!(g, E_locs, weights, E_mean, variance, mode)
 
-    @. J = J - O_mean       # (p,N) - (p,1) column wise
-    J_bar = J
-    if weights === nothing
-        @. J_bar = w * J_bar
-    else
-        # J_bar .*= reshape(wgpu, 1, :)
-        J_bar .*= reshape(w, 1, :)
-    end
-    # copyto!(g, tmp)
-    g = tmp
-    p_cg   = minSR_buf.p_cg
-    Ap  = minSR_buf.Ap
+    J .-= O_mean                        # (p, N) − (p,) column-wise
+    J .*= reshape(weights, 1, :)        # column b scaled by √w_b
 
-    # needed GPU synchronisation for CG solver
-    backend = KernelAbstractions.get_backend(J_bar)
-    KernelAbstractions.synchronize(backend)
-    cg_solve!(w, J_bar, λ, g, p_cg, Ap, Δθ) # wgpu -> solution of CG solver
+    backend = KernelAbstractions.get_backend(J)
+    KernelAbstractions.synchronize(backend) # for sure
+    cg_solve!(weights, J, λ, g, p_cg, Ap, Δθ) # reuse weights as CG result buffer
 
-    # mul!(Δθ, J_bar, wgpu, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
-    mul!(Δθ, J_bar, w, 1f0, 0f0) # Δθ is flat (p,) vector with updated values of NN parameters
+    mul!(Δθ, J, weights, 1f0, 0f0)      # Δθ = J_bar · solution
+    return Δθ
 end
 
 """
@@ -216,9 +191,8 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         return E_mean, variance, last_addr, acceptance
     end
 
-    compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, 
+    Δθ = compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf, 
                       ansatz, mode, λ, weights)
-    Δθ = minSR_buf.Δθ
     θ = jacobian_buf.θ
 
     if minSR_buf.vel && minSR_buf.moment !== nothing

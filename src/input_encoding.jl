@@ -237,7 +237,7 @@ function encode!(xe, e::MomentumEncoding{D,A,WN}) where {D,A,WN}
     off     = WN ? 1 : 0                 # n·k_d goes to channel off + d
     backend = KernelAbstractions.get_backend(xe)
     _momentum_encode_kernel!(backend)(xe, e.K, nch, off; ndrange = (M, B))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return xe
 end
 

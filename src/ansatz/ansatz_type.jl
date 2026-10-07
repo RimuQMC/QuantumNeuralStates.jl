@@ -53,7 +53,7 @@ function log_psi!(ansatz, vals)
 end
 
 """
-    init_gradient_seed(ansatz) -> init_gradient_seed(ansatz.ansatz_type, ansatz)
+    init_gradient_seed!(ansatz, seed) -> init_gradient_seed(ansatz.ansatz_type, ansatz, seed)
 
 This function ensures correct gradient seed values in backpropagation. It returns correct
 [`AnsatzType`](@ref) dispatch function that returns the gradient seed. It is important
@@ -90,8 +90,8 @@ already (the seed for such output can be just filled with `ones`). Nevertheless,
 some extra terms as `1/out[2]` in the second equation of the example, this extra term needs to 
 be accounted in `init_gradient_seed`.
 """
-function init_gradient_seed(ansatz)
-    return init_gradient_seed(ansatz.ansatz_type, ansatz)
+function init_gradient_seed!(ansatz, seed)
+    return init_gradient_seed!(ansatz.ansatz_type, ansatz, seed)
 end
 
 """
@@ -123,14 +123,9 @@ function psi!(::LogPsi, ansatz, vals::AbstractArray{T}) where {T}
     return logψ
 end
 
-function init_gradient_seed(::LogPsi, ansatz)
-    batch = ansatz.model.batch
-    last_l = last(ansatz.model.layers)
-    out_dim = size(last_l.z, 1) # should be 1 
-    T = eltype(last_l.z)
-
-    init_seed = fill!(similar(last_l.z, out_dim, batch), one(T))
-    return init_seed
+function init_gradient_seed!(::LogPsi, ansatz, seed)
+    # fill!(seed, one(T)) - seed filled with ones() in initialisation in JacobianBuffer
+    return seed
 end
 
 """
@@ -172,7 +167,7 @@ function psi(::LogPsiSignTanh, ansatz, flat_vals::AbstractVector)
     return exp.(clamp.(a1 .- ansatz.logψ_centering, -80f0, 80f0)) .* a2
 end
 
-function init_gradient_seed(::LogPsiSignTanh, ansatz)
+function init_gradient_seed!(::LogPsiSignTanh, ansatz, seed)
     # ψ = exp(out[1])*out[2] -> out[2] = tanh(a[2])
     # dL/dout[1] = dL/dψ * dψ/dout[1] = dL/dψ * (ψ + 0) = dL/dψ * ψ
     #                                     = dL/dlogψ ---> so far loss gradients
@@ -180,18 +175,12 @@ function init_gradient_seed(::LogPsiSignTanh, ansatz)
     #                                     = dL_dψ * ψ * exp(out[1])/ψ 
     #                                     = dL/dlogψ / out[2]
     
-    batch = ansatz.model.batch
-    last_l = last(ansatz.model.layers)
-    out_dim = size(last_l.z, 1) # should be 2
-    T = eltype(last_l.z)
-    ϵ = T(1e-6) # safe check for division around zero
+    T = eltype(seed)
+    z = last(ansatz.model.layers).z
+    view(seed, 1, :) .= one(T)
+    view(seed, 2, :) .= one(T) ./ safe_denom.(view(z, 2, :), T(1e-6))
 
-    init_seed = similar(last_l.z, out_dim, batch) # correct device
-    init_seed[1, :] .= one(T)
-    # the 1/out[2] factor now lives in the init gradient seed (as upper derivative)
-    init_seed[2, :] .= one(T) ./ safe_denom.(view(last_l.z, 2, :), ϵ)
-
-    return init_seed
+    return seed
 end
 
 

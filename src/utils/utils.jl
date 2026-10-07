@@ -112,17 +112,19 @@ The number of samples collected for this analysis is `batch*batch_iter`.
 function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
     vmc_buf.start = true # sanity check to allow Elocs calculations
     batch = ansatz.model.batch
+    ansatz.neuron_statistics = false
+    ansatz.jacobian_statistics = false
     E_block = Vector{Rimu.StatsTools.BlockingResult{Float64}}()
 
     for i in 1:batch_iter
         new_addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
         addrs = new_addrs
         if weights === nothing
-            result = Rimu.blocking_analysis(E_locs)
+            result = Rimu.blocking_analysis(Float64.(Array(E_locs)))
             push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
         else
             E_locs .= E_locs .* weights .* batch # counterterm for extra blocking analysis norm
-            result = Rimu.blocking_analysis(E_locs)
+            result = Rimu.blocking_analysis(Float64.(Array(E_locs)))
             push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
         end
     end

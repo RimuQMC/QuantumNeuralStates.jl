@@ -40,7 +40,7 @@ function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
     backend = KernelAbstractions.get_backend(E_locs)
     _local_energy_kernel!(backend)(E_locs, ham_diag, offsets, ham_offdiag, m_logψ, m_sign,
                                    n_logψ, n_sign; ndrange = ansatz.model.batch)
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
 
     elocs_clamping!(E_locs, median_cpu)
 end

@@ -42,7 +42,7 @@ model = Chain(input,
               Dense(32=>1, identity; batch=batch, device=device); 
               batch=batch, device=device)
 
-ansatz = NeuralAnsatz(LogPsi(), H, model, batch)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch; truncation=3*3)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
@@ -50,15 +50,29 @@ ansatz = NeuralAnsatz(LogPsi(), H, model, batch)#; multiforward_buffer=batch*500
 phases = [
     TrainingPhase(
         mode       = :energy,
+        optimiser  = :adam,
+        vmc_sampler= :metropolis,
+        stop       = StopBuffer(var_thr=1),
+        η          = 0.001f0,
+        skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
+        truncation = 4*4,
+        block_size = 10, 
+        block_min  = 6, 
+        patience   = 3,
+        max_epochs = 100,
+    ),
+    TrainingPhase(
+        mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
         stop       = StopBuffer(var_thr=1),
         η          = 0.001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
+        truncation = 4*4,
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 500,
+        max_epochs = 30,
     ),
     # TrainingPhase(
     #     mode       = :energy,
@@ -77,9 +91,9 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/example.txt"
+SAVEFILE = "./weights/example_test.txt"
 SAVE_WEIGHTS = false
-LOADFILE = ""
+LOADFILE = "./weights/example_test.txt"
 LOAD_WEIGHTS = false
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false

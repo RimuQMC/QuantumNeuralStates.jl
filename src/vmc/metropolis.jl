@@ -1,122 +1,5 @@
 
 """
-    metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-        -> new_addrs, E_locs, weights, grads_n, acc
-
-Similar as [`metropolis_sample!`](@ref) but during proposal step, new addresses are proposed 
-using random draw weighted by hamiltonian elements - heatbath.
-
-## Notes
-heatbath inspiration:
-https://pubs.acs.org/doi/10.1021/acs.jctc.6b00407
-"""
-function metropolis_heatbath_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
-    B = ansatz.model.batch # batch 
-
-    # --- STEP 0: all needed variables from buffer ------------------------------------
-    addrs_m = vmc_buf.addrs_m   
-    diag_ham = vmc_buf.diag_ham     
-    flat_addrs_all = vmc_buf.flat_addrs_m
-    flat_Hmn_all = vmc_buf.flat_offdiag_ham
-    walker_idx_all = vmc_buf.walker_idx
-    offsets_all = vmc_buf.offsets
-    accepted = vmc_buf.accepted
-    total_buf = vmc_buf.total_buf
-    E_locs = vmc_buf.E_locs
-    flat_vals_m = vmc_buf.flat_vals_m
-    vals_n_cpu = vmc_buf.vals_n_cpu  
-    vec_cpu = vmc_buf.vec_cpu
-
-    # Due to uknown size of all possible offdiagonals I push! dynamically
-    empty!(flat_addrs_all)
-    empty!(flat_Hmn_all)
-    empty!(walker_idx_all)
-    empty!(total_buf)
-
-    # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
-    offsets_all[1] = 0
-    for b in 1:B
-        col           = hamiltonian * addrs_n[b]
-        diag_ham[b]   = diagonal_element(col)
-
-        for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-          # collect ALL off-diagonals for E_loc
-          if iszero(H_mn) # ignore zero off_diagonals elements
-              continue
-          end
-
-          # reject any offdiagonal that leaves the truncated subspace
-          occ_m = onr(addr_m)
-          if ansatz.truncation !== nothing && violates_truncation(occ_m, ansatz.truncation.mask)
-              continue
-          end
-
-          # nonzero_count += 1
-          push!(flat_addrs_all, addr_m)
-          push!(flat_Hmn_all,   H_mn)
-          push!(walker_idx_all, b)
-          push!(total_buf, H_mn)
-        end
-        offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
-        _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b)
-    end
-
-    # --- STEP 2: NN forward on proposals ---------------------------------------------
-    vals_m = compute_logψ(ansatz, addrs_m)
-    copyto!(ansatz.z_cpu, vals_m)   
-    if ansatz.meanfield !== nothing
-        compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
-    end
-
-    # --- STEP 3: NN on starting addresses --------------------------------------------
-    vals_n = compute_logψ(ansatz, addrs_n)
-    copyto!(vals_n_cpu, vals_n)
-    if ansatz.meanfield !== nothing
-        compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
-    end
-
-    n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
-    m_logψ, _ = log_psi!(ansatz.ansatz_type, ansatz, ansatz.z_cpu)
-
-    # --- STEP 4: acceptance of proposed offdiagonals ---------------------------------
-    m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) # (B,)
-    ratios = m_logψ
-    draws = rand(Float64, B)             # (B,)
-    accepted .= draws .< ratios  # (B,) Bool
-    acc = sum(accepted)/B
-
-    # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
-    addrs_n  .= ifelse.(accepted, addrs_m, addrs_n) # (B,) - reuse addrs_n as buffer
-    new_addrs = addrs_n # reference for addrs_n 
-
-
-    if !vmc_buf.start
-        # no need to calculate gradient during thermalization
-        grads_n = nothing
-    else
-        grads_n = back_jacobian!(ansatz, jacobian_buf)  # (p, B)
-        neuron_statistics(ansatz; idx=vmc_buf.block_idx)
-        jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
-    end
-
-    # --- STEP 6: E_loc calculations --------------------------------------------------
-    weights = nothing # uniform weights in Metropolis
-    if vmc_buf.start === true
-        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
-        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
-    end
-
-    # --- RETURNS ---------------------------------------------------------------------
-    # new_addrs: (B,) next walker positions -> CPU
-    # E_locs:    (B,) local energies        -> CPU (possibly GPU)
-    # weights:   sampler weights 
-    # grads_n:   (p,B) gradients            -> GPU 
-    # acc:       acceptance over batch input (in %)
-    return new_addrs, E_locs, weights, grads_n, acc
-
-end
-
-"""
     metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         -> new_addrs, E_locs, weights, grads_n, acc
 
@@ -124,14 +7,13 @@ VMC sampler using Metropolis-Hastings algorithm (MCMC). New addresses are propos
 from offdiagonal connections and the accepted/rejected using Acceptance ratio.
 
 ```math
-A(m|n) = min(1, \\frac{|\\psi(m)|^2}{|\\psi(n)|^2})
+A(m|n) = \\min\\left(1, \\frac{|\\psi(m)|^2}{|\\psi(n)|^2} \\frac{N_n}{N_m}\\right),
 ```
 
-We assume hermition hamiltonians as `H_mn = H_nm`, and also that number of 
-off-diagonals spawned from address `n` is same as from address `m`.
+where `N_n` and `N_m` are the numbers of valid off-diagonals spawned from address 
+`n` and `m`. 
 
 # Variables
-
 * `vmc_buf`: [`VMCBuffer`](@ref) intermediate variables for allocation-free calculations.
 * `jacobian_buf`: [`JacobianBuffer`](@ref) used during calculation of pre-sample jacobians.
 * `hamiltonian`: hamiltonian defined in Rimu.
@@ -141,81 +23,40 @@ off-diagonals spawned from address `n` is same as from address `m`.
 function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     B = ansatz.model.batch # batch 
 
-    # --- STEP 0: all needed variables from buffer ------------------------------------
+    # --- STEP 0: all needed variables from buffer ---------------------------------
     addrs_m = vmc_buf.addrs_m       
-    diag_ham = vmc_buf.diag_ham 
-    flat_addrs_all = vmc_buf.flat_addrs_m
-    flat_Hmn_all = vmc_buf.flat_offdiag_ham
-    walker_idx_all = vmc_buf.walker_idx
-    offsets_all = vmc_buf.offsets
+    ham_diag = vmc_buf.ham_diag     
+    ham_offdiag_buf = vmc_buf.ham_offdiag_buf
+    addrs_offdiag_buf = vmc_buf.addrs_offdiag_buf
+    offsets = vmc_buf.offsets
     accepted = vmc_buf.accepted
-    total_buf = vmc_buf.total_buf
-    E_locs = vmc_buf.E_locs
-    flat_vals_m = vmc_buf.flat_vals_m
-    vals_n_cpu = vmc_buf.vals_n_cpu 
-    vec_cpu = vmc_buf.vec_cpu
+    E_locs = vmc_buf.E_locs                     
+    vals_offdiag_buf = vmc_buf.vals_offdiag_buf
+    weights = vmc_buf.weights               
 
-    # Due to uknown size of all possible offdiagonals I push! dynamically
-    empty!(flat_addrs_all)
-    empty!(flat_Hmn_all)
-    empty!(walker_idx_all)
-    empty!(total_buf)
+    # --- STEP 1: collect all offdiagonals -----------------------------------------
+    mask = ansatz.truncation === nothing ? nothing : ansatz.truncation.mask
+    collect_offdiagonals!(addrs_offdiag_buf, ham_offdiag_buf, ham_diag, offsets, 
+                          hamiltonian, addrs_n, mask)
+    total_offdiag = isempty(offsets) ? 0 : Int(@allowscalar offsets[end])
+    total_offdiag == 0 && error("no valid off-diagonals for any walker: the sampler cannot move " *
+                                "(check the truncation mask)")
 
-    # --- STEP 1: one random proposal per walker + collect ALL off-diags for E_loc ----
-    offsets_all[1] = 0
-    for b in 1:B
-        col           = hamiltonian * addrs_n[b]
-        diag_ham[b]   = diagonal_element(col)
+    # --- STEP 2: proposal and NN forward on proposal ------------------------------
+    metropolis_state_proposal!(addrs_m, addrs_offdiag_buf.data, offsets, E_locs)    # E_locs buffer reuse
+    metropolis_count_ratio!(E_locs, addrs_m, offsets, hamiltonian, mask)     # E_locs ← N_n / N_m
 
-        for (k, (addr_m, H_mn)) in enumerate(offdiagonals(col))
-          # collect ALL off-diagonals for E_loc
-          if iszero(H_mn) # ignore zero off_diagonals elements
-              continue
-          end
-
-          # reject any offdiagonal that leaves the truncated subspace
-          occ_m = onr(addr_m)
-          if ansatz.truncation !== nothing && violates_truncation(occ_m, ansatz.truncation.mask)
-              continue
-          end
-
-          push!(flat_addrs_all, addr_m)
-          push!(flat_Hmn_all,   H_mn)
-          push!(walker_idx_all, b)
-          push!(total_buf, 1.0)
-        end
-        offsets_all[b+1] = length(flat_addrs_all) # offsets are lengths of spawned offdiagonals
-        _state_proposal!(offsets_all, flat_addrs_all, total_buf, addrs_m, b)
-    end
-
-    # --- STEP 2: NN forward on proposals ---------------------------------------------
     vals_m = compute_logψ(ansatz, addrs_m)
-    copyto!(ansatz.z_cpu, vals_m)   
-    if ansatz.meanfield !== nothing
-        compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
-    end
+    copyto!(ansatz.model.z_last, vals_m)
+    # if ansatz.meanfield !== nothing
+    #     compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
+    # end
 
-    # --- STEP 3: NN on starting addresses --------------------------------------------
+    # --- STEP 3: NN on starting addresses -----------------------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
-    copyto!(vals_n_cpu, vals_n)
-    if ansatz.meanfield !== nothing
-        compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
-    end
-
-    n_logψ, n_sign = log_psi!(ansatz.ansatz_type, ansatz, vals_n_cpu)
-    m_logψ, _ = log_psi!(ansatz.ansatz_type, ansatz, ansatz.z_cpu)
-
-    # --- STEP 4: acceptance of proposed offdiagonals ---------------------------------
-    m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) # (B,)
-    ratios = m_logψ
-    draws = rand(Float64, B)             # (B,)
-    accepted .= draws .< ratios  # (B,) Bool
-    acc = sum(accepted)/B
-
-    # --- STEP 5: new sampled addresses - CPU ONLY ------------------------------------
-    addrs_n  .= ifelse.(accepted, addrs_m, addrs_n) # (B,) - reuse addrs_n as buffer
-    new_addrs = addrs_n # reference for addrs_n 
-
+    # if ansatz.meanfield !== nothing
+    #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
+    # end
 
     if !vmc_buf.start
         # no need to calculate gradient during thermalization
@@ -226,18 +67,37 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
     end
 
-    # --- STEP 6: E_loc calculations --------------------------------------------------
-    weights = nothing # uniform weights in Metropolis
-    if vmc_buf.start === true
-        multi_compute_logψ!(ansatz, flat_addrs_all, flat_vals_m)
-        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
+    # --- STEP 4: acceptance of proposals ------------------------------------------
+    m_logψ, m_sign = log_psi!(ansatz, ansatz.model.z_last)
+    n_logψ, n_sign = log_psi!(ansatz, vals_n)
+
+    # A = |ψ_m|²/|ψ_n|² · N_n/N_m   (count ratio stored in E_locs)
+    m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) .* E_locs # (B,)
+    ratios = m_logψ
+    Random.rand!(E_locs)            # buffer reuse
+    draws = E_locs                  # (B,)
+    accepted .= draws .< ratios     # (B,) Bool
+    acc = sum(accepted)/B
+
+    # --- STEP 5: new sampled addresses --------------------------------------------
+    addrs_n  .= ifelse.(accepted, addrs_m, addrs_n)     # (B,) - reuse addrs_n as buffer
+    new_addrs = addrs_n     # reference for addrs_n 
+
+    # --- STEP 6: E_loc calculations and weights -----------------------------------
+    if vmc_buf.start
+        vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
+        vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
+        offdiag_logψ, offdiag_sign = log_psi!(ansatz, vals_offdiag_valid)
+
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, offdiag_logψ, offdiag_sign) # saved in E_locs
+        fill!(weights, 1f0 / B)
     end
 
     # --- RETURNS ---------------------------------------------------------------------
-    # new_addrs: (B,) next walker positions -> CPU
-    # E_locs:    (B,) local energies        -> CPU (possibly GPU)
-    # weights:   sampler weights 
-    # grads_n:   (p,B) gradients            -> GPU 
+    # new_addrs: (B,) next walker positions -> CPU/GPU
+    # E_locs:    (B,) local energies        -> CPU/GPU
+    # weights:   (B,) uniform weights       -> CPU/GPU
+    # grads_n:   (p,B) gradients            -> CPU/GPU 
     # acc:       acceptance over batch input (in %)
     return new_addrs, E_locs, weights, grads_n, acc
 end

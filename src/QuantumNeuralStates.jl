@@ -72,9 +72,9 @@ export VMCBuffer
 include("./vmc/local_energy.jl")
 export calculate_local_energy!
 include("./vmc/metropolis.jl")
-export metropolis_sample!, metropolis_heatbath_sample!
+export metropolis_sample!
 include("./vmc/ctmc.jl")
-export ctmc_sample!, ctmc_heatbath_sample!
+export ctmc_sample!
 include("./vmc/vmc.jl")
 export vmc_sample!, vmc_energy
 

@@ -201,6 +201,6 @@ function back!(layer::Conv, buf::ConvBuffer, J_W, J_b,
     _conv_JW_kernel!(backend)(J_W, buf.δz, x, layer.stride, layer.pad, Nsp; ndrange = size(J_W))
     _conv_Jb_kernel!(backend)(J_b, buf.δz, Nsp; ndrange = size(J_b))
     _conv_dx_kernel!(backend)(buf.δ, buf.δz, layer.W, layer.stride, layer.pad, Nsp; ndrange = size(buf.δ))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
     return buf.δ
 end

@@ -19,7 +19,6 @@ Pre-allocated buffer for the Adam optimiser.
 * `β1`: decay rate for 1st moment (default: `0.9`).
 * `β2`: decay rate for 2nd moment (default: `0.999`).
 * `ε`: numerical stability term (default: `1e-5`).
-* `E_grads`: buffer for energy gradients of length `N` (number of samples).
 
 ## Notes
 Adam: A Method for Stochastic Optimization: https://arxiv.org/pdf/1412.6980.
@@ -32,7 +31,6 @@ mutable struct AdamBuffer{T, V <: AbstractArray{T}}
     β1::T
     β2::T
     ε::T
-    E_grads::V
 end
 function AdamBuffer(N::Int, p::Int, ansatz; β1=0.9f0, β2=0.999f0, ε=1f-5)
     T = Float32
@@ -40,8 +38,7 @@ function AdamBuffer(N::Int, p::Int, ansatz; β1=0.9f0, β2=0.999f0, ε=1f-5)
     m = fill!(similar(l.b, p), zero(T))
     v = fill!(similar(l.b, p), zero(T))
     Δθ = fill!(similar(l.b, p), zero(T))
-    E_grads = similar(l.b, N)
-    return AdamBuffer{T, typeof(m)}(m, v, Δθ, 0, β1, β2, ε, E_grads)
+    return AdamBuffer{T, typeof(m)}(m, v, Δθ, 0, β1, β2, ε)
 end
 
 # Single Adam step — all in-place, zero allocations
@@ -99,23 +96,11 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
 
 
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.ham_diag
-    N = length(E_locs)
+    g = vmc_buf.ham_diag    # reused buffer for gradients
 
-    # WEIGHTS CTMC / METROPOLIS ?
-    if weights === nothing
-        w = 1.0/N     # uniform weights from Metropolis MC
-    else
-        w = weights
-    end
+    apply_loss!(g, E_locs, weights, E_mean, variance, mode)
 
-    # gradients are in tmp 
-    apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
-
-    E_grads = adam_buf.E_grads # weighted loss gradients
-    # copyto!(E_grads, tmp)
-    # mul!(adam_buf.Δθ, jacobian_buf.J, E_grads, 1f0, 0f0)
-    mul!(adam_buf.Δθ, jacobian_buf.J, tmp, 1f0, 0f0)
+    mul!(adam_buf.Δθ, jacobian_buf.J, g, 1f0, 0f0)
     adam_step!(adam_buf, adam_buf.Δθ) 
 
     θ = jacobian_buf.θ

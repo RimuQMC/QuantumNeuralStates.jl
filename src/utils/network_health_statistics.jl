@@ -5,12 +5,11 @@
 Prints into chosen `io` statistics of array as mean,variance, minimum, and maximum. 
 This is meant for investigating health of Neural Network's parameters.
 """
-function _print_stats(name, arr; io=stdout)
-    v = vec(arr)
-    m   = Float32(mean(v))
-    s2  = Float32(var(v))
-    mn  = Float32(minimum(v))
-    mx  = Float32(maximum(v))
+function _print_stats(name, v; io=stdout)
+    m   = (mean(v))
+    s2  = (var(v))
+    mn  = (minimum(v))
+    mx  = (maximum(v))
     @printf(io, "  %-14s mean=% .4e   var=% .4e   min=% .4e   max=% .4e\n", name, m, s2, mn, mx)
 end
 
@@ -89,9 +88,9 @@ end
 function neuron_statistics(ansatz, io; sat_thresh=0.95, idx::Int=0)
     println(io)
     println(io, "$(idx) "*"="^90)
-    println(io, "  Input  ($(size(ansatz.x_cpu_buffer)))")
+    println(io, "  Input  ($(size(ansatz.model.x)))")
     println(io, "  "*"─"^90)
-    _print_stats("  input", ansatz.x_cpu_buffer; io=io)
+    _print_stats("  input", ansatz.model.x; io=io)
 
     for (li, layer) in enumerate(ansatz.model.layers)
         if layer isa Dense
@@ -180,15 +179,15 @@ function jacobian_statistics(J::AbstractMatrix, io; lambda::Float32=1f-3, idx::I
     println(io)
     n_params, B = size(J)
     layer_name="full_jacobian"
+    O = Array{Float32}(J)
 
     # --- 1) per-sample gradient norm ---
-    norms = vec(sqrt.(sum(abs2, J; dims=1)))
+    norms = sqrt.(sum(abs2, O; dims=1))
     @printf(io,  "%i [%s] grad-norm   mean=%.4e  var=%.4e  min=%.4e  max=%.4e\n",
             idx, layer_name, Float32(mean(norms)), Float32(var(norms)),
             Float32(minimum(norms)), Float32(maximum(norms)))
 
     # --- 2) trusted directions vs lambda ---
-    O = Array{Float32}(J)
     sv = svdvals(O)                      # descending, length = min(n_params, B)
     sigma_thresh = sqrt(lambda)          # σ² > λ  <=>  σ > sqrt(λ)
     n_trusted = count(>(sigma_thresh), sv)

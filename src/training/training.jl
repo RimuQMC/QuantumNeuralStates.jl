@@ -61,7 +61,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     @info "Neural Network parameters: $(n_params)"
 
     total = memory_estimate((ansatz, buffers, jac_buf, vmc_buf))
-    @info "Total memory estimate: $(_fmt_bytes(total))"
+    @info "Memory estimate: $(_fmt_bytes(total))"
 
     # this is for more detailed memory print 
     # parts = ("ansatz"   => ansatz,
@@ -106,6 +106,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 change_truncation!(ansatz, H, phase.truncation)
             end
         end
+        println(ansatz.truncation)
 
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
 
@@ -203,7 +204,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         save_master(savefile, jac_buf.θ, addrs_n, ansatz)
     end
 
-    # final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
+    final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
     
     return all_E, all_E_err, all_var, addrs_n
 end
