@@ -26,6 +26,7 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     ham_offdiag_buf = vmc_buf.ham_offdiag_buf
     addrs_offdiag_buf = vmc_buf.addrs_offdiag_buf
     offsets = vmc_buf.offsets
+    accepted = vmc_buf.accepted
     E_locs = vmc_buf.E_locs                     
     vals_offdiag_buf = vmc_buf.vals_offdiag_buf
     weights = vmc_buf.weights               
@@ -54,6 +55,10 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
     # end
 
+    Random.rand!(E_locs)
+    accepted .= E_locs .< 0.75f0     # move with prob 0.75 → stay with prob 0.25
+    addrs_n .= ifelse.(accepted, addrs_m, addrs_n)
+
     # --- STEP 5: E_loc, gradient, and weights calculations ------------------------
     if !vmc_buf.start
         grads_n = nothing
@@ -68,14 +73,13 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     end
 
     # --- STEP 6: new sampled addresses --------------------------------------------
-    addrs_n .= addrs_m # (B,) - reuse addrs_n as buffer
     new_addrs = addrs_n # reference for addrs_n 
-    acc = 1
+    acc = sum(accepted) / B
 
     # --- RETURNS ------------------------------------------------------------------
     # new_addrs: (B,) next walker positions -> CPU/GPU
     # E_locs:    (B,) local energies        -> CPU/GPU
-    # weights:   (B,) sampler weights            -> CPU/GPU
+    # weights:   (B,) sampler weights       -> CPU/GPU
     # grads_n:   (p,B) gradients            -> CPU/GPU
     # acc:       acceptance over batch input (in %)
     return new_addrs, E_locs, weights, grads_n, acc

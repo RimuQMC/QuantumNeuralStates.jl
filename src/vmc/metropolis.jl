@@ -52,6 +52,13 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     #     compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
     # end
 
+    # --- STEP 2.5: NN on off-diagonals (before the addrs_n forward pass!) ---------
+    if vmc_buf.start
+        vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
+        vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
+        offdiag_logψ, offdiag_sign = log_psi!(ansatz, vals_offdiag_valid)
+    end
+
     # --- STEP 3: NN on starting addresses -----------------------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
     # if ansatz.meanfield !== nothing
@@ -85,10 +92,6 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
     # --- STEP 6: E_loc calculations and weights -----------------------------------
     if vmc_buf.start
-        vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
-        vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
-        offdiag_logψ, offdiag_sign = log_psi!(ansatz, vals_offdiag_valid)
-
         calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, offdiag_logψ, offdiag_sign) # saved in E_locs
         fill!(weights, 1f0 / B)
     end

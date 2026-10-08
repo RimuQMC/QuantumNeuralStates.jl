@@ -106,7 +106,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 change_truncation!(ansatz, H, phase.truncation)
             end
         end
-        println(ansatz.truncation)
+        if ansatz.truncation !== nothing
+            println(ansatz.truncation)
+        end
 
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
 

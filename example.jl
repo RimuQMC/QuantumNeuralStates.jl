@@ -37,42 +37,45 @@ model = Chain(input,
               Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-              Pool(:mean; device=device),
-              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
-              Dense(32=>1, identity; batch=batch, device=device); 
+              Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
+              Pool(:sum; device=device),
+              Dense(1=>1, identity; batch=batch, device=device);
+              # Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              # Dense(32=>1, identity; batch=batch, device=device); 
               batch=batch, device=device)
 
-ansatz = NeuralAnsatz(LogPsi(), H, model, batch; truncation=3*3)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+ansatz = NeuralAnsatz(LogPsi(), H, model, batch; input_scale_func=log1p)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
 # -------------------------------------------------------------------
 phases = [
-    TrainingPhase(
-        mode       = :energy,
-        optimiser  = :adam,
-        vmc_sampler= :metropolis,
-        stop       = StopBuffer(var_thr=1),
-        η          = 0.001f0,
-        skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
-        truncation = 4*4,
-        block_size = 10, 
-        block_min  = 6, 
-        patience   = 3,
-        max_epochs = 100,
-    ),
+    # TrainingPhase(
+    #     mode       = :energy,
+    #     optimiser  = :minSR,
+    #     vmc_sampler= :metropolis,
+    #     stop       = StopBuffer(var_thr=1),
+    #     η          = 0.001f0,
+    #     skip       = [(1, 50), (300, 200)],  # (epoch, B) → burnin B
+    #     # truncation = 4*4,
+    #     block_size = 10, 
+    #     block_min  = 6, 
+    #     patience   = 3,
+    #     max_epochs = 300,
+    # ),
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(var_thr=1),
-        η          = 0.001f0,
+        stop       = StopBuffer(var_thr=0.1),
+        η          = 0.0001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
-        truncation = 4*4,
+        # η_decrease = [(0.1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
+        # truncation = 4*4,
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 30,
+        max_epochs = 20,
     ),
     # TrainingPhase(
     #     mode       = :energy,
@@ -91,10 +94,10 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/example_test.txt"
-SAVE_WEIGHTS = false
-LOADFILE = "./weights/example_test.txt"
-LOAD_WEIGHTS = false
+SAVEFILE = "./weights/example_test2.txt"
+SAVE_WEIGHTS = true
+LOADFILE = "./weights/example_test2.txt"
+LOAD_WEIGHTS = true
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false
 
