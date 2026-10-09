@@ -121,7 +121,7 @@ function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz
         addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
     end
 
-    E_t = Vector{Float64}(undef, n_meas)        # time series of weighted batch means
+    E_t = Vector{Float64}(undef, n_iter)        # time series of weighted batch means
 
     for t in 1:n_iter
         # decorrelating steps (no E_loc)
@@ -140,7 +140,7 @@ function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz
     end
 
     res = Rimu.blocking_analysis(E_t)
-    println("\nFinal VMC estimate: $n_meas measurements × $(ansatz.model.batch) walkers, every $n_skip steps")
+    println("\nFinal VMC estimate: $n_iter measurements × $(ansatz.model.batch) walkers, every $n_skip steps")
     println(res)
     return res
 end
