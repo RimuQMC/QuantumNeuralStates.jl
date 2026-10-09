@@ -8,15 +8,9 @@ function vmc_sample!(vmc_sampler::Symbol, vmc_buf, jacobian_buf, ham, addrs_n, a
     if vmc_sampler === :metropolis
         new_addrs, E_locs, weights, grads_n, acceptance = 
             metropolis_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
-    elseif vmc_sampler === :metropolis_heatbath
-        new_addrs, E_locs, weights, grads_n, acceptance = 
-            metropolis_heatbath_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     elseif vmc_sampler === :ctmc
         new_addrs, E_locs, weights, grads_n, acceptance = 
             ctmc_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
-    elseif vmc_sampler === :ctmc_heatbath
-        new_addrs, E_locs, weights, grads_n, acceptance = 
-            ctmc_heatbath_sample!(vmc_buf, jacobian_buf, ham, addrs_n, ansatz)
     else
         @error "Invalid vmc sampler! Choose from :metropolis or :ctmc. You have inserted $(vmc_sampler)"
     end
@@ -40,8 +34,7 @@ See [`ctmc_sample!`](@ref) and [`metropolis_sample!`](@ref).
 * `jacobian_buf`: pre-allocated [`JacobianBuffer`](@ref) for per-sample jacobian computation.
 
 # Keyword Arguments
-* `vmc_sampler`: sampling method, `:metropolis`, `:ctmc`, `:metropolis_heatbath`, `ctmc_heatbath` 
-    (default: `:metropolis`).
+* `vmc_sampler`: sampling method, `:metropolis`, `:ctmc` (default: `:metropolis`).
 * `burnin`: number of thermalisation steps before collecting samples (default: `100`).
 * `mode`: minimisation mode - loss function - (default: `:energy`).
 
@@ -81,33 +74,38 @@ function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
     new_addrs, E_locs, weights, grads_n, acceptance = vmc_sample!(vmc_sampler, vmc_buf, jacobian_buf, H, addrs_n, ansatz)
     addrs_n = new_addrs
 
-    if weights === nothing
-        E_mean = 0.0
-        for k in eachindex(E_locs)
-            E_mean += E_locs[k]
-        end
-        E_mean /= ansatz.model.batch
-
-        variance = 0.0
-        for k in eachindex(E_locs)
-            variance += (E_locs[k] - E_mean)^2
-        end
-        variance /= ansatz.model.batch
-    else
-        E_mean = 0.0
-        for k in eachindex(E_locs)
-            E_mean += weights[k] * E_locs[k]
-        end
-
-        variance = 0.0
-        for k in eachindex(E_locs)
-            variance += weights[k] * (E_locs[k] - E_mean)^2
-        end
-    end
-
-    #@show any(isnan, E_locs), any(isinf, E_locs), extrema(E_locs)
-    if any(isnan, grads_n) || any(isinf, grads_n)
+    all(isfinite, grads_n) ||
         error("grads_n contains NaN/Inf: extrema = $(extrema(grads_n))")
-    end
-      return E_mean, variance, addrs_n, acceptance, weights
+    all(isfinite, E_locs) ||
+        error("E_locs contain NaN/Inf: extrema = $(extrema(E_locs))")
+
+
+    E_mean, variance = local_energy_stats!(vmc_buf, E_locs, weights, ansatz.model.batch)
+
+    return E_mean, variance, addrs_n, acceptance, weights
+end
+
+@kernel function weighted_sum_kernel!(acc, E_locs, weights)
+    i = @index(Global)
+    Atomix.@atomic acc[1] += weights[i] * E_locs[i]
+end
+
+@kernel function weighted_variance_kernel!(acc, E_locs, weights, E_mean)
+    i = @index(Global)
+    d = E_locs[i] - E_mean[1]   # <-- index inside kernel
+    Atomix.@atomic acc[1] += weights[i] * d * d
+end
+
+function local_energy_stats!(vmc_buf, E_locs, weights, batch)
+    E_mean   = vmc_buf.E_mean
+    variance = vmc_buf.variance
+    backend  = KernelAbstractions.get_backend(E_locs)
+
+    fill!(E_mean, 0f0)
+    weighted_sum_kernel!(backend)(E_mean, E_locs, weights; ndrange = batch)
+
+    fill!(variance, 0f0)
+    weighted_variance_kernel!(backend)(variance, E_locs, weights, E_mean; ndrange = batch)
+
+    return E_mean, variance
 end

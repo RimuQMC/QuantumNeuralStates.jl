@@ -73,7 +73,7 @@ Launch [`_pool_back_uniform_kernel!`](@ref).
 function _pool_uniform!(δx, δ, scale)
     backend = KernelAbstractions.get_backend(δx)
     _pool_back_uniform_kernel!(backend)(δx, δ, eltype(δx)(scale); ndrange = size(δx))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
 end
 
 """
@@ -86,7 +86,7 @@ function _pool_extremum!(op::Val, δx, δ, x)
     fill!(δx, zero(eltype(δx)))
     _pool_back_extremum_kernel!(backend)(δx, δ, x, op;
         ndrange = (size(x, ndims(x)-1), size(x, ndims(x))))
-    KernelAbstractions.synchronize(backend)
+    # KernelAbstractions.synchronize(backend)
 end
 
 """

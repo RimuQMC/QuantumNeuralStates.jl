@@ -50,10 +50,11 @@ to an integer occupation vector and printed with fixed-width formatting.
     Inputs:
       0   0   0   0   0,   1   0   0   0   0, ...
 """
-function _write_addrs(io::IO, addrs::Vector; num_width::Int=3)
+function _write_addrs(io::IO, addrs::AbstractVector; num_width::Int=3)
+    addrs_cpu = Array(addrs)
     println(io, "Inputs:")
-    n_addrs = length(addrs)
-    for (j, a) in enumerate(addrs)
+    n_addrs = length(addrs_cpu)
+    for (j, a) in enumerate(addrs_cpu)
         occ = Int.(onr(a))
         join(io, [@sprintf("%*d", num_width, v) for v in occ], ' ')
         j < n_addrs && print(io, ", ")
@@ -107,7 +108,7 @@ and input scaling match the freshly-constructed `ansatz` before restoring `θ`.
 # Keywords
 * `num_width`: column width used when formatting `addrs`.
 """
-function save_master(filename::String, θ::AbstractVector, addrs::Vector, ansatz;
+function save_master(filename::String, θ::AbstractVector, addrs::AbstractVector, ansatz;
                              num_width::Int=3)
     open(filename, "w") do io
         _write_architecture(io, ansatz.model)
@@ -256,11 +257,12 @@ addresses separated by " | ".
 # Example 
     0, 1, 2, 3, 4, 5 | 1, 0, 0, 2, 1, 3 | ...
 """
-function log_markov_chain(filename::String, addrs; start::Bool=false, num_width::Int=3)
+function log_markov_chain(filename::String, addrs::AbstractVector; start::Bool=false, num_width::Int=3)
     mode = start ? "w" : "a"
+    addrs_cpu = Array(addrs)
 
     open(filename, mode) do io
-        line = join([_format_addr(Int.(onr(a)); w=num_width) for a in addrs], " | ")
+        line = join([_format_addr(Int.(onr(a)); w=num_width) for a in addrs_cpu], " | ")
         println(io, line)
     end
 

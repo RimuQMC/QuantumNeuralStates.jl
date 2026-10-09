@@ -2,12 +2,14 @@ module QuantumNeuralStates
 
 using LinearAlgebra
 using NNlib: tanh, relu, sigmoid, identity, tanh_fast, sigmoid_fast, gelu
-using NNlib: scatter
 using Rimu
 using Gutzwiller
 using Printf
 using Statistics
+using Random
 using KernelAbstractions
+using Atomix
+using GPUArraysCore: @allowscalar
 using SpecialFunctions: loggamma
 
 const PACKAGE_NAME = "QuantumNeuralStates"
@@ -19,6 +21,10 @@ const PACKAGE_NAME = "QuantumNeuralStates"
 Machine Learning package designed to work with Rimu ([online](https://RimuQMC.github.io/Rimu.jl/)).
 """
 # QuantumNeuralStates
+
+function __init__()
+    default_logger()
+end
 
 include("./activations.jl")
 include("./layers/layers_helpers.jl")
@@ -35,6 +41,7 @@ include("./backpropagation/backpropagation.jl") # needs to be included as last b
 include("./utils/save_load.jl")
 include("./utils/network_health_statistics.jl")
 include("./utils/utils.jl")
+include("./utils/gpu_helpers.jl")
 include("./utils/io.jl")
 
 # Dispatch functions for Importance Sampling in Rimu
@@ -65,9 +72,9 @@ export VMCBuffer
 include("./vmc/local_energy.jl")
 export calculate_local_energy!
 include("./vmc/metropolis.jl")
-export metropolis_sample!, metropolis_heatbath_sample!
+export metropolis_sample!
 include("./vmc/ctmc.jl")
-export ctmc_sample!, ctmc_heatbath_sample!
+export ctmc_sample!
 include("./vmc/vmc.jl")
 export vmc_sample!, vmc_energy
 

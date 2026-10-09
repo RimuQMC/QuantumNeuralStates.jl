@@ -6,10 +6,10 @@ This structure acumulates each iteration's mean energy and variance.
 It is used in [`block_summary`](@ref) for statistics over block.
 """
 mutable struct BlockStats
-    energies::Vector{Float64}
-    variances::Vector{Float64}
+    energies::Vector{Float32}
+    variances::Vector{Float32}
 end
-BlockStats() = BlockStats(Float64[], Float64[])
+BlockStats() = BlockStats(Float32[], Float32[])
 
 """
     push_epoch!(bs::BlockStats, E, var)
@@ -59,11 +59,11 @@ stop = StopBuffer(var_thr=0.01, E_thr=0, require_all=true)
 ```
 """
 Base.@kwdef struct StopBuffer
-    ΔE_thr::Union{Float64, Nothing} = nothing       # difference of Energy over blocks
-    Δvar_thr::Union{Float64, Nothing} = nothing     # difference of variance over blocks
-    E_thr::Union{Float64, Nothing} = nothing        # energy of 1 block
-    var_thr::Union{Float64, Nothing} = nothing      # variance of 1 block
-    accept_thr::Union{Float64, Nothing} = nothing   # acceptence of Markov Chain threshold
+    ΔE_thr::Union{Float32, Nothing} = nothing       # difference of Energy over blocks
+    Δvar_thr::Union{Float32, Nothing} = nothing     # difference of variance over blocks
+    E_thr::Union{Float32, Nothing} = nothing        # energy of 1 block
+    var_thr::Union{Float32, Nothing} = nothing      # variance of 1 block
+    accept_thr::Union{Float32, Nothing} = nothing   # acceptence of Markov Chain threshold
     require_all::Bool = false      # if ALL or ANY conditions needs to meet
 end
 

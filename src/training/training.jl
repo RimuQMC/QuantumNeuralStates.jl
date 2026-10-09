@@ -37,7 +37,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     @info "Hilbert space dimension: $(@sprintf("%.3e", dimension(H)))"
 
     # --- initialise addresses ---------------------------------------
-    addrs_n = if isfile(loadfile) && load
+    addrs = if isfile(loadfile) && load
         x = load_master(ansatz, loadfile)
         [typeof(addr)(Tuple(col)) for col in eachcol(x)]
     else
@@ -46,6 +46,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         # this is prefered as the neural network randomly sample anyway at the 
         # beginning and also it is necessary for input truncation to work
     end
+    backend = KernelAbstractions.get_backend(ansatz.model.x)
+    addrs_n = KernelAbstractions.allocate(backend, eltype(addrs), ansatz.model.batch)
 
     if markov
         log_markov_chain(markovfile, addrs_n; start=true)
@@ -59,7 +61,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     @info "Neural Network parameters: $(n_params)"
 
     total = memory_estimate((ansatz, buffers, jac_buf, vmc_buf))
-    @info "Total memory estimate: $(_fmt_bytes(total))"
+    @info "Memory estimate: $(_fmt_bytes(total))"
 
     # this is for more detailed memory print 
     # parts = ("ansatz"   => ansatz,
@@ -74,9 +76,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     # println("  ", rpad("total:", 10), _fmt_bytes(sum(memory_estimate ∘ last, parts)))
     # println("---------------------------")
 
-    all_E     = Float64[]
-    all_E_err = Float64[]
-    all_var   = Float64[]
+    all_E     = Float32[]
+    all_E_err = Float32[]
+    all_var   = Float32[]
 
     tmp_neuron_statistics = ansatz.neuron_statistics
     tmp_jacobian_statistics = ansatz.jacobian_statistics
@@ -104,13 +106,16 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 change_truncation!(ansatz, H, phase.truncation)
             end
         end
+        if ansatz.truncation !== nothing
+            println(ansatz.truncation)
+        end
 
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
 
         block       = BlockStats()
-        E_hist      = Float64[]
-        E_err_hist  = Float64[]
-        var_hist    = Float64[]
+        E_hist      = Float32[]
+        E_err_hist  = Float32[]
+        var_hist    = Float32[]
         epoch       = 0
         converged   = false
         last_accept = NaN
@@ -138,7 +143,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
 
             addrs_n     = last_addrs
             last_accept = acceptance
-            push_epoch!(block, E_mean, variance)
+            push_epoch!(block, Array(E_mean)[1], Array(variance)[1])
 
             if markov
                 log_markov_chain(markovfile, addrs_n; start=false)

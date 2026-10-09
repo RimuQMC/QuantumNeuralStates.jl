@@ -99,7 +99,8 @@ function addrs_random(ham, addr, batch)
 end
 
 """
-    final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
+    final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
+                            n_iter = 100, n_skip = 5, burnin = 50)
 
 This function is run at the end of the [`run_training_loop`](@ref) to see what is variational
 energy of learned [`NeuralAnsatz`](@ref). It is using `BlockingAnalysis` from Rimu and
@@ -109,34 +110,39 @@ It runs MC sampler from last addresses `addrs` visited in training loop and coll
 energies to calculate the cariational energy. It is using same parameters as the training loop.
 The number of samples collected for this analysis is `batch*batch_iter`.
 """
-function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
-    vmc_buf.start = true # sanity check to allow Elocs calculations
-    batch = ansatz.model.batch
-    E_block = Vector{Rimu.StatsTools.BlockingResult{Float64}}()
+function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
+                                 n_iter = 100, n_skip = 5, burnin = 50)
+    ansatz.neuron_statistics = false
+    ansatz.jacobian_statistics = false
 
-    for i in 1:batch_iter
-        new_addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
-        addrs = new_addrs
-        if weights === nothing
-            result = Rimu.blocking_analysis(E_locs)
-            push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
-        else
-            E_locs .= E_locs .* weights .* batch # counterterm for extra blocking analysis norm
-            result = Rimu.blocking_analysis(E_locs)
-            push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
-        end
+    # re-equilibrate after the last parameter update
+    vmc_buf.start = false
+    for _ in 1:burnin
+        addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
     end
-    println()
-    println("Final blocking analysis on $(batch_iter*batch) E_locs samples")
-    n = batch_iter
-    combined_result = Gutzwiller.CombinedBlockingResult(
-        mean(r.mean for r in E_block),
-        √(mean(r.err^2 for r in E_block) / n),
-        √(mean(r.err_err^2 for r in E_block) / n),
-        E_block,
-    )
-    println(combined_result)
-    return nothing
+
+    E_t = Vector{Float64}(undef, n_iter)        # time series of weighted batch means
+
+    for t in 1:n_iter
+        # decorrelating steps (no E_loc)
+        vmc_buf.start = false
+        for _ in 1:(n_skip - 1)
+            addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+        end
+
+        # measurement step
+        vmc_buf.start = true
+        addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+
+        e = Float64.(Array(E_locs))
+        w = Float64.(Array(weights))
+        E_t[t] = sum(w .* e)    # weights already normalized
+    end
+
+    res = Rimu.blocking_analysis(E_t)
+    println("\nFinal VMC estimate: $n_iter measurements × $(ansatz.model.batch) walkers, every $n_skip steps")
+    println(res)
+    return res
 end
 
 """ 

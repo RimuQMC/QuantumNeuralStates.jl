@@ -12,19 +12,16 @@ Pre-allocated buffer for basic gradient descent optimisation.
 
 ## Fields
 * `Δθ`: parameter gradient vector, shape `(p,)`.
-* `E_grads`: weighted loss function gradient, shape `(N,)`.
 """
 mutable struct DescentBuffer{T, V <: AbstractArray{T}}
     Δθ::V
-    E_grads::V
 end
 function DescentBuffer(N::Int, p::Int, ansatz)
     T = Float32
     l = last(ansatz.model.layers)
     Δθ = fill!(similar(l.b, p), zero(T))
-    E_grads = similar(l.b, N)
     V = typeof(Δθ)
-    return DescentBuffer{T, V}(Δθ, E_grads)
+    return DescentBuffer{T, V}(Δθ)
 end
 
 """
@@ -67,28 +64,15 @@ function descent(jacobian_buf, vmc_buf, descent_buf, H, ansatz, addrs_n;
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf; 
             vmc_sampler=vmc, burnin=burnin, mode=mode)
 
-
     E_locs = vmc_buf.E_locs
-    tmp = vmc_buf.diag_ham
-    N = length(E_locs)
+    g = vmc_buf.ham_diag    # reused buffer for gradients
 
-    # WEIGHTS CTMC / METROPOLIS ?
-    if weights === nothing
-        w = 1.0/N     # uniform weights from Metropolis MC
-    else
-        w = weights
-    end
+    apply_loss!(g, E_locs, weights, E_mean, variance, mode)
 
-    # gradients are in tmp 
-    apply_loss!(tmp, E_locs, w, E_mean, variance, mode)
-
-    E_grads = descent_buf.E_grads # weighted loss gradients
-    Δθ = descent_buf.Δθ
-    copyto!(E_grads, tmp)
-    mul!(Δθ, jacobian_buf.J, E_grads, 1f0, 0f0) # (p,) = (p,N) x (N,)
+    mul!(descent_buf.Δθ, jacobian_buf.J, g, 1f0, 0f0) # (p,) = (p,N) x (N,)
 
     θ = jacobian_buf.θ
-    @. θ = θ - η*Δθ
+    @. θ = θ - η*descent_buf.Δθ
     update!(ansatz, jacobian_buf, θ)
 
     return E_mean, variance, last_addr, acceptance
