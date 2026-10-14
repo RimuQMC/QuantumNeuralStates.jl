@@ -54,7 +54,7 @@ end
         total = 0f0
         for i in (start + 1):stop
             k = i - start                          # row of ham_offdiag in column b
-            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign * m_sign
+            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -40f0, 40f0)) * n_sign * m_sign
         end
         E_locs[b] = ham_diag[b] + total
     end
@@ -68,7 +68,7 @@ end
         total = 0f0
         for i in (start + 1):stop
             k = i - start                          # row of ham_offdiag in column b
-            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -80f0, 80f0)) * n_sign[b] * m_sign[i]
+            total += ham_offdiag[k, b] * exp(clamp(m_logψ[i] - n_logψ[b], -40f0, 40f0)) * n_sign[b] * m_sign[i]
         end
         E_locs[b] = ham_diag[b] + total
     end
@@ -77,20 +77,39 @@ end
 """
     elocs_clamping!(E_locs, median_cpu) -> E_locs
 
-Function that do median based clamping of local energies. This is needed especially 
-when we are near nodes of the wave-function.
+Clamp outliers of the local energies in place to the window
+`median ± n_q · Q_q(|E_loc − median|)`, where `Q_q` is the `q`-quantile of the
+distances from the median.
+
+# Arguments
+* `E_locs`: (B,) device vector of local energies, overwritten with clipped values.
+* `median_cpu`: (B,) host buffer; its contents are overwritten and reordered.
+
+# Keyword Arguments
+* `q`: quantile that defines the spread (default `0.99`; use `0.95` for small batches).
+* `n_q`: window width in units of that spread (default `10`).
 
 # Note
-`median` functions are not GPU supported and CPU calculations are around 100x faster
-then GPU on arrays of size(E_locs).
+`median!` and `quantile!` are not GPU-supported and run on the CPU copy, which is
+faster than the GPU for arrays of this size.
 """
-function elocs_clamping!(E_locs, median_cpu)
-    # Carefully clip E_locs spikes for smoothening E_locs
+function elocs_clamping!(E_locs, median_cpu; q::Float32 = 0.99f0, n_q::Float32 = 10f0)
     copyto!(median_cpu, E_locs)
     med = median!(median_cpu)
-    spike_window = max(50, 5 * abs(med))
-    upper_bound = med + spike_window
-    lower_bound = med - spike_window
-    E_locs .= clamp.(E_locs, lower_bound, upper_bound)
+    median_cpu .= abs.(median_cpu .- med)       # reuse buffer: |E − med| - distance from median
+    dq = Float32(quantile!(median_cpu, q))      # 99th percentile, in place
+    if !(isfinite(dq) && dq > 0f0)
+        @warn "elocs_clamping!: q-quantile spread = $dq degenerate/non-finite — skipping clipping"
+        return E_locs
+    end
+    width     = n_q * dq
+    n_clipped = count(>(width), median_cpu)
+    if n_clipped > 0
+        E_locs .= clamp.(E_locs, med - width, med + width)     # always clip
+    end
+    if n_clipped > 5                                            # only warn if unusually many
+        @warn "elocs_clamping!: clipped $n_clipped / $(length(median_cpu)) samples " *
+              "beyond ±$(width) (= $(n_q) × q$(q) spread)"
+    end
     return E_locs
 end

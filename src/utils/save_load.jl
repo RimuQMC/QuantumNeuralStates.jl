@@ -1,28 +1,40 @@
 
 
+"""
+    encoding_signature(chain) -> String
+
+Signature of the input encoding of `chain`: type, grid size, channels and any
+encoding-specific options, e.g. `OccupationEncoding(grid=(4, 4), C=1)`.
+The grid size may differ when loading (see [`load_master`](@ref)).
+"""
+encoding_signature(chain) = _signature(chain.enc)
+
+"""
+    nn_signature(chain) -> String
+
+Signature of the network layers of `chain` (type, shape, kernel, channels, stride,
+padding, activation, `LayerNorm`), joined by `" | "`. Must match exactly when loading.
+"""
+nn_signature(chain) = join(map(_signature, chain.layers), " | ")
 
 """
     chain_signature(chain) -> String
 
-Build a compact string identifying `chain`'s architecture: the input encoding
-(type, grid size, channels) followed by each layer's type, shape, and
-configuration (kernel size, channels, stride, padding mode, activation, whether
-`LayerNorm` is present), dispatched per component via [`_signature`](@ref).
-Used to verify a freshly-constructed model matches a saved one before loading
-weights into it — see [`load_master`](@ref).
+Full one-line signature (encoding and layers), for display.
 """
-chain_signature(chain) =
-    join((_signature(chain.enc), map(_signature, chain.layers)...), " | ")
+chain_signature(chain) = encoding_signature(chain) * " | " * nn_signature(chain)
 
 """
     _write_architecture(io, chain)
 
-Write `chain`'s [`chain_signature`](@ref) to `io`, under an `"Architecture:"`
-header. See [`save_master`](@ref).
+Write the architecture under an `"Architecture:"` header as two lines:
+the [`encoding_signature`](@ref) and the [`nn_signature`](@ref).
+See [`save_master`](@ref).
 """
 function _write_architecture(io, chain)
     println(io, "Architecture:")
-    println(io, chain_signature(chain))
+    println(io, encoding_signature(chain))
+    println(io, nn_signature(chain))
 end
 
 """
@@ -86,6 +98,7 @@ and input scaling match the freshly-constructed `ansatz` before restoring `θ`.
 
 ## Example of txt file
     Architecture:
+        OccupationEncoding(grid=(4, 4), C=1)
         Conv((3,),1=>100,relu,stride=1,pad=Periodic,LN=false) | Pool(mean) | Dense(100=>1,identity,LN=false)
 
     Input Scaling:
@@ -119,19 +132,45 @@ function save_master(filename::String, θ::AbstractVector, addrs::AbstractVector
         println(io)
         _write_addrs(io, addrs; num_width)
     end
-    @info "Saving ($(length(θ)) weights, $(length(addrs)) addresses, and $(nameof(ansatz.input_scale_func)) 
-    input scaling function with norm of $(ansatz.max_norm)) to $filename"
+    @info "Saving $(length(θ)) weights, $(length(addrs)) addresses and " *
+          "$(nameof(ansatz.input_scale_func)) input scaling (max_norm = $(ansatz.max_norm)) " *
+          "to $filename"
 end
 
 # helper: pulls "log1p" from string "scale function: log1p"
 parse_kv(line) = strip(split(line, ":", limit=2)[2])
 
 """
+    parse_encoding(line) -> (; type, grid, C, extras)
+
+Parse an encoding signature such as `MomentumEncoding(grid=(16, 16), C=3, occupation=true)`
+into its type name, grid size, channel count, and a `Dict` of any further `key=value` options.
+"""
+function parse_encoding(line::AbstractString)
+    m = match(r"^(\w+)\(grid=\(([^)]*)\),\s*C=(\d+)(.*)\)$", strip(line))
+    m === nothing && error("Cannot parse encoding signature: $line")
+    type   = String(m[1])
+    grid   = Tuple(parse.(Int, filter(!isempty, strip.(split(m[2], ',')))))   # handles "(16,)"
+    C      = parse(Int, m[3])
+    extras = Dict{String,String}()
+    for kv in split(m[4], ',')
+        kv = strip(kv)
+        isempty(kv) && continue
+        k, v = split(kv, '='; limit = 2)
+        extras[strip(k)] = strip(v)
+    end
+    return (; type, grid, C, extras)
+end
+
+"""
     load_master(ansatz, filename::String) -> x
 
 Load a saved model — written by [`save_master`](@ref) — into `ansatz`,
-after verifying it's compatible with the saved one (architecture and input
-scaling). Returns the saved walker addresses `x` as a matrix of `Int`.
+after verifying it's compatible with the saved one (architecture, 
+input encoding, and input scaling).
+
+Returns the saved walker addresses `x` (matrix of `Int`) and `grid_changed`. If the grid
+changed, the saved addresses belong to the old grid and must not be used.
 
 # Arguments
 * `ansatz`: the `NeuralAnsatz` to load into. See [`NeuralAnsatz`](@ref).
@@ -149,11 +188,30 @@ function load_master(ansatz, filename::String)
     @assert w_idx !== nothing "Missing 'Weights:' header"
     @assert i_idx !== nothing "Missing 'Inputs:' header"
 
-    # --- architecture check ---
-    saved_arch   = lines[arch_idx + 1]
-    current_arch = chain_signature(ansatz.model)
-    saved_arch == current_arch ||
-        error("Architecture mismatch.\n  saved:   $saved_arch\n  current: $current_arch")
+    # --- encoding check ---
+    saved_enc = parse_encoding(lines[arch_idx + 1])
+    current_enc = parse_encoding(encoding_signature(ansatz.model))
+
+    saved_enc.type == current_enc.type ||
+        error("Encoding type mismatch: saved $(saved_enc.type), current $(current_enc.type)")
+    length(saved_enc.grid) == length(current_enc.grid) ||
+        error("Grid dimension mismatch: saved $(length(saved_enc.grid))D, " *
+              "current $(length(current_enc.grid))D")
+    saved_enc.C == current_enc.C ||
+        error("Channel mismatch: saved C=$(saved_enc.C), current C=$(current_enc.C)")
+    saved_enc.extras == current_enc.extras ||
+        error("Encoding options mismatch: saved $(saved_enc.extras), current $(current_enc.extras)")
+
+    grid_changed = saved_enc.grid != current_enc.grid
+    grid_changed &&
+        @info "Loading weights trained on grid $(saved_enc.grid) into grid $(current_enc.grid) " *
+              "— saved walkers are discarded"
+
+    # --- network check (strict) ---
+    saved_nn = lines[arch_idx + 2]
+    current_nn = nn_signature(ansatz.model)
+    saved_nn == current_nn ||
+        error("Network mismatch.\n  saved:  $saved_nn\n  current:  $current_nn")
 
     # --- scaling ---
     saved_scale_name    = Symbol(parse_kv(lines[sc_idx + 1]))         # :log1p
@@ -236,7 +294,7 @@ function load_master(ansatz, filename::String)
     end
 
     @info "Weights loaded from $filename ($p parameters)"
-    return x
+    return x, grid_changed
 end
 
 

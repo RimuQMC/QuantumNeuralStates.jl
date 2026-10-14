@@ -62,7 +62,7 @@ end
 
 """
     adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n; kwargs...)
-            -> E_mean, variance, last_addr, acceptance
+            -> E_mean, variance, last_addr, acceptance, eta_eff
 
 Apply Adam moment updates and performs gradient descent step for parameter optimisation.
 
@@ -107,5 +107,5 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
     @. θ = θ - η*adam_buf.Δθ
     update!(ansatz, jacobian_buf, θ)
 
-    return E_mean, variance, last_addr, acceptance
+    return E_mean, variance, last_addr, acceptance, η
 end

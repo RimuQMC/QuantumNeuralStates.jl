@@ -26,7 +26,7 @@ end
 
 """
     descent(jacobian_buf, vmc_buf, descent_buf, H, ansatz, addrs_n; kwargs...)
-            -> E_mean, variance, last_addr, acceptance
+            -> E_mean, variance, last_addr, acceptance, eta_eff
 
 Apply basic gradient descent step for parameter optimisation.
 
@@ -75,5 +75,5 @@ function descent(jacobian_buf, vmc_buf, descent_buf, H, ansatz, addrs_n;
     @. θ = θ - η*descent_buf.Δθ
     update!(ansatz, jacobian_buf, θ)
 
-    return E_mean, variance, last_addr, acceptance
+    return E_mean, variance, last_addr, acceptance, η
 end

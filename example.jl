@@ -19,7 +19,7 @@ N = 50 # number of particles
 # M = 10 # number of sites
 # addr = near_uniform(BoseFS{N,M}) # Rimu
 # H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
-M = 7*7 # number of sites
+M = 5*5 # number of sites
 addr = BoseFS{missing, M}()                                  # phonon vacuum, variable phonon number
 H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 
@@ -29,7 +29,7 @@ H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 batch  = 1024
 act = relu
 pad = Zeros()
-input = MomentumEncoding((7,7), H; device=device)
+input = OccupationEncoding((5,5), H; device=device)
 model = Chain(input,
               # Dense(nsites(input)*nchannels(input)=>500, tanh; batch=batch, device=device, layer_norm=true), 
               # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
@@ -46,7 +46,7 @@ model = Chain(input,
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
-                      input_scale_func=sqrt, truncation=3*3)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+                      input_scale_func=sqrt)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
@@ -56,14 +56,14 @@ phases = [
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(E_thr=0),
+        stop       = StopBuffer(var_thr=0.001),
         η          = 0.001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
         # truncation = 3*3,
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 10,
+        max_epochs = 200,
     ),
     # TrainingPhase(
     #     mode       = :energy,
@@ -96,9 +96,9 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/example_test2.txt"
-SAVE_WEIGHTS = false
-LOADFILE = "./weights/example_test2.txt"
+SAVEFILE = "./weights/example_test4.txt"
+SAVE_WEIGHTS = true
+LOADFILE = "./weights/example_test3.txt"
 LOAD_WEIGHTS = false
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false

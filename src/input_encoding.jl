@@ -164,13 +164,13 @@ size, and number of channels (plus the occupation flag for `MomentumEncoding`).
 Used by [`chain_signature`](@ref).
 """
 _signature(e::OccupationEncoding) =
-    "OccupationEncoding($(e.size),C=1)"
+    "OccupationEncoding(grid=$(e.size), C=$(nchannels(e)))"
 
 _signature(e::MomentumEncoding{D,A,WN}) where {D,A,WN} =
-    "MomentumEncoding($(e.size),C=$(nchannels(e)),occupation=$(WN))"
+    "MomentumEncoding(grid=$(e.size), C=$(nchannels(e)), occupation=$(WN))"
 
 _signature(e::NoEncoding) =
-    "NoEncoding($(e.size),C=$(e.channels))"
+    "NoEncoding(grid=$(e.size), C=$(nchannels(e)))"
 
 """
     nsites(enc) -> Int

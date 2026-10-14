@@ -38,8 +38,12 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
 
     # --- initialise addresses ---------------------------------------
     addrs = if isfile(loadfile) && load
-        x = load_master(ansatz, loadfile)
-        [typeof(addr)(Tuple(col)) for col in eachcol(x)]
+        x, grid_change = load_master(ansatz, loadfile)
+        if !grid_change && size(x, 2) == ansatz.model.batch
+            [typeof(addr)(Tuple(col)) for col in eachcol(x)]
+        else
+            fill(addr, ansatz.model.batch) # fill whole batch with same starting address
+        end
     else
         # addrs_random(H, addr, steps)
         fill(addr, ansatz.model.batch) # fill whole batch with same starting address
@@ -48,6 +52,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     end
     backend = KernelAbstractions.get_backend(ansatz.model.x)
     addrs_n = KernelAbstractions.allocate(backend, eltype(addrs), ansatz.model.batch)
+    copyto!(addrs_n, addrs)
 
     if markov
         log_markov_chain(markovfile, addrs_n; start=true)
@@ -98,7 +103,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 pidx, length(phases), phase.mode, phase.optimiser, phase.vmc_sampler, phase.max_epochs)
         println(repeat("─", 100))
         @printf("%-6s %-18s %-12s %-12s %-11s %-11s %-9s %-10s\n",
-                "Block", "E", "E_err", "Var", "|ΔE|", "|Δvar|", "Accept", "η (LR)")
+                "Block", "E", "E_err", "Var", "|ΔE|", "|Δvar|", "Accept", "η_eff (LR)")
         println(repeat("─", 100))
 
         if phase.truncation !== nothing
@@ -112,17 +117,18 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
 
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
 
-        block       = BlockStats()
-        E_hist      = Float32[]
-        E_err_hist  = Float32[]
-        var_hist    = Float32[]
-        epoch       = 0
-        converged   = false
+        block = BlockStats()
+        E_hist = Float32[]
+        E_err_hist = Float32[]
+        var_hist = Float32[]
+        epoch = 0
+        converged = false
         last_accept = NaN
         phase_block_idx = 1
 
-        η          = phase.η
-        η_dec_idx  = isempty(phase.η_decrease) ? 0 : 1 # for decrease η criterion
+        η = phase.η
+        eta_sum = 0f0
+        η_dec_idx = isempty(phase.η_decrease) ? 0 : 1 # for decrease η criterion
 
         while !converged && epoch < phase.max_epochs
             epoch += 1
@@ -136,12 +142,13 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 ansatz.jacobian_statistics = tmp_jacobian_statistics
             end
 
-            E_mean, variance, last_addrs, acceptance =
+            E_mean, variance, last_addrs, acceptance, eta_eff =
                 _run_epoch(opt_symbol, vmc_symbol, opt_buf, jac_buf, vmc_buf, H, ansatz, addrs_n;
                            burnin=burnin, mode=phase.mode,
                            λ=phase.λ, η=η)
 
-            addrs_n     = last_addrs
+            eta_sum += eta_eff
+            addrs_n = last_addrs
             last_accept = acceptance
             push_epoch!(block, Array(E_mean)[1], Array(variance)[1])
 
@@ -177,7 +184,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                         vmc_buf.block_idx, E_b, E_err_b, var_b,
                         isnan(diff_E)   ? 0.0 : diff_E,
                         isnan(diff_var) ? 0.0 : diff_var,
-                        last_accept, η)
+                        last_accept, eta_sum/phase.block_size)
+                eta_sum = 0f0
 
                 # if vmc_buf.block_idx >= phase.block_min
                 if phase_block_idx >= phase.block_min
