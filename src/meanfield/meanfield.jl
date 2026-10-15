@@ -53,15 +53,14 @@ function `func` and needed parameters `params` for its evalation.
 * `params` can be arbitrary type best fitted for passing necessary values.
 * When defining mean-field function read also [`(mf)`] for closer details.
 """
-function _choose_meanfield_function(H::Rimu.FroehlichPolaron)
+function _choose_meanfield_function(H::Rimu.FroehlichPolaron{T}) where T
     eta, f = solve_self_consistent_eta(H)
 
-    small_val = -35
-    log_f = [fi == 0.0 ? small_val : log(abs(fi)) for fi in f]   # (M,) fixed
+    small_val = T(-35)
+    log_f = [fi == zero(T) ? small_val : log(abs(fi)) for fi in f]   # (M,) fixed
     log_f_row = reshape(log_f, 1, :)
-    const_term = -0.5 * sum(f .^ 2)                         # scalar, fixed
+    const_term = T(-0.5) * sum(f .^ 2)                         # scalar, fixed
 
     params = (log_f_row, const_term)
     return forward_logMF_FroehlichND!, params
 end
-# function _choose_meanfield_function(H::Rimu.FroehlichPolaronND{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any})

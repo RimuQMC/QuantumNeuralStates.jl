@@ -159,6 +159,7 @@ Base.@kwdef struct TrainingPhase
     mode::Union{Symbol, Tuple} = :energy
     optimiser::Symbol = :adam
     vmc_sampler::Symbol = :metropolis
+    d_decay::Union{Nothing, Tuple{Float32, Int}} = nothing
     stop::StopBuffer = StopBuffer()
     η::Float32 = 0.001f0
     λ::Float32 = 0.001f0
@@ -189,9 +190,10 @@ function _build_opt_buffer(phase, n_params, ansatz)
     vmc = phase.vmc_sampler
 
     if opt === :minSR return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                 velocity=false, β=0.9f0), vmc
+                                                 velocity=false, β=0.9f0, d_decay=phase.d_decay), vmc
     elseif opt === :minSR_momentum return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                              velocity=true,  β=0.9f0), vmc
+                                                              velocity=true,  β=0.9f0, 
+                                                              d_decay=phase.d_decay), vmc
     elseif opt === :descent return :descent, DescentBuffer(ansatz.model.batch, n_params, ansatz), vmc
     elseif opt === :adam return :adam, AdamBuffer(ansatz.model.batch, n_params, ansatz; 
                                                   β1=0.9f0, β2=0.999f0, ε=1f-3), vmc

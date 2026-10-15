@@ -62,8 +62,14 @@ mutable struct minSRBuffer{T,V<:AbstractVector{T},X}
     moment::X
     p_cg::V
     Ap::V
+
+    # Fubini-Study distance for effective learning step size
+    d_base::T        # fixed cap, 0.02
+    d_start::T       # cap at the start of the phase
+    d_decay::Int     # steps until d_start has decayed to d_base (0 = no warm-up)
+    step::Int        # steps taken in this phase
 end
-function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
+function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0, d_decay=nothing)
     T = Float32
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
@@ -79,9 +85,12 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0)
         moment = MomentumBuffer(p, ansatz; β=β)
     end
 
+    D_base = T(2f-2)
+    D_start, D_decay = d_decay === nothing ? (D_base, 0) : (T(d_decay[1]), Int(d_decay[2]))
+
     V = typeof(O_mean)
     X = typeof(moment)
-    return minSRBuffer{T,V,X}(O_mean, Δθ, vel, moment, p_cg, Ap)
+    return minSRBuffer{T,V,X}(O_mean, Δθ, vel, moment, p_cg, Ap, D_base, D_start, D_decay, 0)
 end
 
 """
@@ -164,6 +173,20 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf,
     return Δθ, sq, true
 end
 
+
+"""
+    current_d_max!(buf::minSRBuffer) -> d_max
+
+Fubini–Study cap for the current step: decays linearly from `d_start` to `d_base`
+over `d_decay` steps, then stays at `d_base`. Advances the step counter.
+"""
+function current_d_max!(buf::minSRBuffer{T}) where {T}
+    buf.step += 1
+    buf.d_decay == 0 && return buf.d_base
+    w = clamp(one(T) - T(buf.step - 1) / T(buf.d_decay), zero(T), one(T))   # 1 → 0
+    return buf.d_base + (buf.d_start - buf.d_base) * w
+end
+
 """
     minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; kwargs...)
             -> E_mean, variance, last_addr, acceptance, eta_eff
@@ -193,25 +216,24 @@ where `d = η ‖J̄ᵀΔθ‖` is the linearised Fubini–Study length of the s
 * `mode`: loss mode (default `:energy`), see [`apply_loss!`](@ref).
 * `λ`: Tikhonov shift, relative to the mean eigenvalue of `J̄ᵀJ̄` (default `1f-3`).
 * `η`: learning rate / imaginary-time step (default `1f-3`).
-* `d_max`: maximum Fubini–Study length per step (default `2f-2`).
 * `max_norm`: Euclidean backstop on `‖Δθ‖` (default `1f3`).
 
 # Notes
 * The Fubini–Study cap is the main step control (natural norm constraint, DOI:
-  10.1016/j.jcp.2024.113351, Sec. 3.1). It is inactive in normal training and acts only on 
-  variance spikes and transitions.
+  10.1016/j.jcp.2024.113351, Sec. 3.1). See also [`minSRBuffer`](@ref).
 * The Euclidean backstop guards against weight growth along near-null directions of `S`.
 * The step is skipped (parameters unchanged) if the solve fails or `d`, or `‖Δθ‖` is non-finite.
 * Momentum, if enabled, is applied before `d` is measured.
 """
 function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
                vmc = :metropolis, burnin = 100, mode = :energy,
-               λ::Float32 = 1f-3, η::Float32 = 1f-3,
-               d_max::Float32 = 2f-2, max_norm::Float32 = 1f3)
+               λ::Float32 = 1f-3, η::Float32 = 1f-3, max_norm::Float32 = 1f3)
 
     E_mean, variance, last_addr, acceptance, weights =
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
                    vmc_sampler=vmc, burnin=burnin, mode=mode)
+
+    d_max = current_d_max!(minSR_buf)
 
     # --- natural-gradient direction -------------------------------------------
     # after this call: jacobian_buf.J holds J' = J̄/√s,  sq = √s
