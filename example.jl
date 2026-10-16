@@ -56,7 +56,6 @@ phases = [
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        d_decay = (1, 100),
         stop       = StopBuffer(var_thr=0.001),
         η          = 0.001f0,
         skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B

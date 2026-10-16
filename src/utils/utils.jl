@@ -175,3 +175,54 @@ function select_device()
         return identity
     end
 end
+
+"""
+    RunningMean{T}
+
+Running mean of `log(x)` (geometric mean of recent epochs) with outlier detection.
+Used for spike detection on the energy variance and for drop detection on the Jacobian
+scale `s`. Shared across phases, so the baseline survives phase changes.
+
+# Fields
+* `rmean`: running mean of `log(x)`.
+* `init`: `false` until the first valid value has been seen.
+* `n_spike`: number of consecutive outlier epochs.
+"""
+mutable struct RunningMean{T}
+    rmean::T
+    init::Bool
+    n_spike::Int
+end
+RunningMean{T}() where {T} = RunningMean{T}(zero(T), false, 0)
+
+"""
+    is_outlier!(r, x; up = true, factor = 10, max_spike = 10) -> Bool
+
+`true` if `x` deviates from the running (geometric) mean by more than `factor`:
+upward if `up = true` (variance spikes), downward if `up = false` (drops of `s`).
+More than `max_spike` outliers in a row are treated as a new regime: the running mean
+adopts the current value. Non-finite or non-positive `x` is ignored. The running mean
+moves quickly towards the safe side (ρ = 0.3) and slowly towards the unsafe side (ρ = 0.05).
+"""
+function is_outlier!(r::RunningMean{T}, x::T; up::Bool = true,
+                     factor::T = T(10), max_spike::Int = 10) where {T}
+    (isfinite(x) && x > zero(T)) || return false
+    lx = log(x)
+    if !r.init                                         # first valid value of the run
+        r.rmean, r.init, r.n_spike = lx, true, 0
+        return false
+    end
+    dev = up ? lx - r.rmean : r.rmean - lx             # > 0: towards the unsafe side
+    if dev > log(factor)
+        r.n_spike += 1
+        if r.n_spike > max_spike                       # persistent → new regime
+            r.rmean, r.n_spike = lx, 0
+            return false
+        end
+        return true                                    # genuine outlier
+    end
+    r.n_spike = 0
+    ρ = dev < zero(T) ? T(0.3) : T(0.05)               # fast to the safe side, slow otherwise
+    r.rmean = (1 - ρ) * r.rmean + ρ * lx
+    return false
+end

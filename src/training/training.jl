@@ -90,6 +90,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     ansatz.neuron_statistics = false # to plot it only every block
     ansatz.jacobian_statistics = false
 
+    var_track = RunningMean{Float32}()
+    s_track = RunningMean{Float32}()
+
     println(repeat("#", 100))
     @printf("  Training with: %d phase(s)", length(phases))
     println()
@@ -115,7 +118,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
             println(ansatz.truncation)
         end
 
-        opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz)
+        opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
 
         block = BlockStats()
         E_hist = Float32[]

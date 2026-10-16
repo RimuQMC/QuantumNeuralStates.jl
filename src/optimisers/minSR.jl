@@ -63,13 +63,12 @@ mutable struct minSRBuffer{T,V<:AbstractVector{T},X}
     p_cg::V
     Ap::V
 
-    # Fubini-Study distance for effective learning step size
-    d_base::T        # fixed cap, 0.02
-    d_start::T       # cap at the start of the phase
-    d_decay::Int     # steps until d_start has decayed to d_base (0 = no warm-up)
-    step::Int        # steps taken in this phase
+    var_track::RunningMean{T}    # spikes of the energy variance
+    s_track::RunningMean{T}      # drops of the Jacobian scale s (saturation)
 end
-function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0, d_decay=nothing)
+function minSRBuffer(N::Int, p::Int, ansatz; 
+                     velocity=false, β=0.9f0,
+                     var_track::RunningMean{Float32}, s_track::RunningMean{Float32})
     T = Float32
     l = first(ansatz.model.layers) # l.b is Vector type, l.W is Matrix type (CPU or GPU)
 
@@ -85,12 +84,10 @@ function minSRBuffer(N::Int, p::Int, ansatz; velocity=false, β=0.9f0, d_decay=n
         moment = MomentumBuffer(p, ansatz; β=β)
     end
 
-    D_base = T(2f-2)
-    D_start, D_decay = d_decay === nothing ? (D_base, 0) : (T(d_decay[1]), Int(d_decay[2]))
 
     V = typeof(O_mean)
     X = typeof(moment)
-    return minSRBuffer{T,V,X}(O_mean, Δθ, vel, moment, p_cg, Ap, D_base, D_start, D_decay, 0)
+    return minSRBuffer{T,V,X}(O_mean, Δθ, vel, moment, p_cg, Ap, var_track, s_track)
 end
 
 """
@@ -173,19 +170,8 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf,
     return Δθ, sq, true
 end
 
-
-"""
-    current_d_max!(buf::minSRBuffer) -> d_max
-
-Fubini–Study cap for the current step: decays linearly from `d_start` to `d_base`
-over `d_decay` steps, then stays at `d_base`. Advances the step counter.
-"""
-function current_d_max!(buf::minSRBuffer{T}) where {T}
-    buf.step += 1
-    buf.d_decay == 0 && return buf.d_base
-    w = clamp(one(T) - T(buf.step - 1) / T(buf.d_decay), zero(T), one(T))   # 1 → 0
-    return buf.d_base + (buf.d_start - buf.d_base) * w
-end
+const D_LOOSE = 1f0      # free adaptation
+const D_TIGHT = 2f-2     # protection on variance spikes / s drops
 
 """
     minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; kwargs...)
@@ -233,7 +219,9 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
                    vmc_sampler=vmc, burnin=burnin, mode=mode)
 
-    d_max = current_d_max!(minSR_buf)
+    # --- variance spike check ------------------------------------------------
+    var = Array(variance)[1]
+    var_spike = is_outlier!(minSR_buf.var_track, var; up = true, factor = 10f0)
 
     # --- natural-gradient direction -------------------------------------------
     # after this call: jacobian_buf.J holds J' = J̄/√s,  sq = √s
@@ -243,6 +231,10 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         @warn "minSR: computation of update failed — skipping update"
         return E_mean, variance, last_addr, acceptance, 0f0
     end
+
+    # --- saturation check: s dropped more than 100× below its running mean ------------
+    s_drop = is_outlier!(minSR_buf.s_track, sq^2; up = false, factor = 100f0)
+    s_drop && @warn "minSR: Jacobian scale s = $(sq^2) dropped more then 100× — possible saturation, tight cap"
 
     # --- momentum -------------------------------------------------------------
     if minSR_buf.vel && minSR_buf.moment !== nothing
@@ -260,6 +252,7 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         return E_mean, variance, last_addr, acceptance, 0f0
     end
 
+    d_max = (var_spike || s_drop) ? D_TIGHT : D_LOOSE
     scale_fs = d > d_max ? d_max / d : 1f0 # d_max = max Fubini–Study distance per step
 
     # --- 2. Euclidean backstop ------------------------------------------------
