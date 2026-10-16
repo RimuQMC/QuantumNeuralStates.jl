@@ -80,17 +80,17 @@ when the layer has a `LayerNorm`. Layers without parameters take up no space.
 """
 struct JacobianBuffer{JC <: AbstractArray, R <: Tuple, DI <: AbstractArray,
                       V <: AbstractVector, JL <: Tuple, ZP <: Tuple, LN}
-    J        ::JC
-    J_layers ::JL
-    ranges   ::R
-    δ_init   ::DI
-    θ        ::V
-    zipped   ::ZP
+    J::JC
+    J_layers::JL
+    ranges::R
+    δ_init::DI
+    θ::V
+    zipped::ZP
     ln_zipped::LN
 end
 function JacobianBuffer(ansatz, buffers::Tuple)
     chain = ansatz.model
-    ref   = first(filter(hasparams, chain.layers))
+    ref = first(filter(hasparams, chain.layers))
     refW, refb = ref.W, ref.b
     batch = chain.batch
 
@@ -137,7 +137,9 @@ function JacobianBuffer(ansatz, buffers::Tuple)
         end
     end
 
-    δ_init = init_gradient_seed(ansatz)
+    δ_init = similar(last(ansatz.model.layers).z)
+    fill!(δ_init, one(eltype(δ_init)))
+
     zipped = map(tuple, chain.layers, buffers, J_layers, layer_inputs(chain))
     return JacobianBuffer(J, J_layers, rs, δ_init, θ, zipped, ln_zipped)
 end
@@ -217,8 +219,8 @@ result into `jac.J` (via [`flatten_jacobian!`](@ref)). `jac.J` has shape `(p, ba
 each column is one sample's full gradient with respect to the flat parameter vector `θ`.
 """
 function back_jacobian!(ansatz, jac::JacobianBuffer)
-    jac.δ_init .= init_gradient_seed(ansatz)
-    _backprop!(jac.δ_init, jac.zipped, jac.ln_zipped)
+    δ_init = init_gradient_seed!(ansatz, jac.δ_init)
+    _backprop!(δ_init, jac.zipped, jac.ln_zipped)
     flatten_jacobian!(jac)
     return jac.J
 end

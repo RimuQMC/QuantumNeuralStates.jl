@@ -179,5 +179,33 @@ methods in Rimu. This affects first stage of applying IS ratio `*1/ψ_source`.
 #
 #     return deposit!(c, k, val, addr => last(parent))
 # end
+# <<<<<<< HEAD
 #
 #
+# ||||||| a290eed
+# function Rimu.DictVectors.deposit!(
+#         c, k, val, parent::Pair{<:Rimu.Interfaces.AbstractOperatorColumn{<:Any,<:Any,  
+#             <:Rimu.FirstOrderTransitionOperator{<:Any,<:Any,
+#                     <:Gutzwiller.AnsatzSampling{Adj,<:Any,<:Any,<:NeuralAnsatz,<:Any}}}}
+# ) where Adj
+#
+#     ansatz = first(parent).hamiltonian.hamiltonian.ansatz
+#     addr = starting_address(first(parent))
+#     if !Adj 
+#         if ansatz.result_dict[addr] < eps(Float64)
+#             val = val / eps(Float64)
+#         else
+#             val = val / ansatz.result_dict[addr]
+#         end
+#     else
+#         val = val * ansatz.result_dict[addr]
+#     end
+#
+#     return deposit!(c, k, val, addr => last(parent))
+# end
+#
+#
+# =======
+# #
+# #
+# >>>>>>> main

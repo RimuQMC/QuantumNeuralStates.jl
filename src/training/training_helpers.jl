@@ -6,10 +6,10 @@ This structure acumulates each iteration's mean energy and variance.
 It is used in [`block_summary`](@ref) for statistics over block.
 """
 mutable struct BlockStats
-    energies::Vector{Float64}
-    variances::Vector{Float64}
+    energies::Vector{Float32}
+    variances::Vector{Float32}
 end
-BlockStats() = BlockStats(Float64[], Float64[])
+BlockStats() = BlockStats(Float32[], Float32[])
 
 """
     push_epoch!(bs::BlockStats, E, var)
@@ -59,11 +59,11 @@ stop = StopBuffer(var_thr=0.01, E_thr=0, require_all=true)
 ```
 """
 Base.@kwdef struct StopBuffer
-    ΔE_thr::Union{Float64, Nothing} = nothing       # difference of Energy over blocks
-    Δvar_thr::Union{Float64, Nothing} = nothing     # difference of variance over blocks
-    E_thr::Union{Float64, Nothing} = nothing        # energy of 1 block
-    var_thr::Union{Float64, Nothing} = nothing      # variance of 1 block
-    accept_thr::Union{Float64, Nothing} = nothing   # acceptence of Markov Chain threshold
+    ΔE_thr::Union{Float32, Nothing} = nothing       # difference of Energy over blocks
+    Δvar_thr::Union{Float32, Nothing} = nothing     # difference of variance over blocks
+    E_thr::Union{Float32, Nothing} = nothing        # energy of 1 block
+    var_thr::Union{Float32, Nothing} = nothing      # variance of 1 block
+    accept_thr::Union{Float32, Nothing} = nothing   # acceptence of Markov Chain threshold
     require_all::Bool = false      # if ALL or ANY conditions needs to meet
 end
 
@@ -184,14 +184,16 @@ function _get_burnin(skip::Vector{Tuple{Int,Int}}, epoch::Int)
 end
 
 """Build the right optimiser buffer for a phase."""
-function _build_opt_buffer(phase, n_params, ansatz)
+function _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
     opt = phase.optimiser
     vmc = phase.vmc_sampler
 
     if opt === :minSR return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                 velocity=false, β=0.9f0), vmc
+                                                 velocity=false, β=0.9f0, 
+                                                 var_track=var_track, s_track=s_track), vmc
     elseif opt === :minSR_momentum return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                              velocity=true,  β=0.9f0), vmc
+                                                              velocity=true,  β=0.9f0, 
+                                                              var_track=var_track, s_track=s_track), vmc
     elseif opt === :descent return :descent, DescentBuffer(ansatz.model.batch, n_params, ansatz), vmc
     elseif opt === :adam return :adam, AdamBuffer(ansatz.model.batch, n_params, ansatz; 
                                                   β1=0.9f0, β2=0.999f0, ε=1f-3), vmc

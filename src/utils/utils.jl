@@ -99,7 +99,8 @@ function addrs_random(ham, addr, batch)
 end
 
 """
-    final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
+    final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
+                            n_iter = 100, n_skip = 5, burnin = 50)
 
 This function is run at the end of the [`run_training_loop`](@ref) to see what is variational
 energy of learned [`NeuralAnsatz`](@ref). It is using `BlockingAnalysis` from Rimu and
@@ -109,34 +110,39 @@ It runs MC sampler from last addresses `addrs` visited in training loop and coll
 energies to calculate the cariational energy. It is using same parameters as the training loop.
 The number of samples collected for this analysis is `batch*batch_iter`.
 """
-function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; batch_iter=100)
-    vmc_buf.start = true # sanity check to allow Elocs calculations
-    batch = ansatz.model.batch
-    E_block = Vector{Rimu.StatsTools.BlockingResult{Float64}}()
+function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
+                                 n_iter = 100, n_skip = 5, burnin = 50)
+    ansatz.neuron_statistics = false
+    ansatz.jacobian_statistics = false
 
-    for i in 1:batch_iter
-        new_addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
-        addrs = new_addrs
-        if weights === nothing
-            result = Rimu.blocking_analysis(E_locs)
-            push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
-        else
-            E_locs .= E_locs .* weights .* batch # counterterm for extra blocking analysis norm
-            result = Rimu.blocking_analysis(E_locs)
-            push!(E_block, result) # blocking analysis do mean (1/N uniform weights factor)
-        end
+    # re-equilibrate after the last parameter update
+    vmc_buf.start = false
+    for _ in 1:burnin
+        addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
     end
-    println()
-    println("Final blocking analysis on $(batch_iter*batch) E_locs samples")
-    n = batch_iter
-    combined_result = Gutzwiller.CombinedBlockingResult(
-        mean(r.mean for r in E_block),
-        √(mean(r.err^2 for r in E_block) / n),
-        √(mean(r.err_err^2 for r in E_block) / n),
-        E_block,
-    )
-    println(combined_result)
-    return nothing
+
+    E_t = Vector{Float64}(undef, n_iter)        # time series of weighted batch means
+
+    for t in 1:n_iter
+        # decorrelating steps (no E_loc)
+        vmc_buf.start = false
+        for _ in 1:(n_skip - 1)
+            addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+        end
+
+        # measurement step
+        vmc_buf.start = true
+        addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+
+        e = Float64.(Array(E_locs))
+        w = Float64.(Array(weights))
+        E_t[t] = sum(w .* e)    # weights already normalized
+    end
+
+    res = Rimu.blocking_analysis(E_t)
+    println("\nFinal VMC estimate: $n_iter measurements × $(ansatz.model.batch) walkers, every $n_skip steps")
+    println(res)
+    return res
 end
 
 """ 
@@ -168,4 +174,55 @@ function select_device()
         @info "No functional GPU backend found, using CPU"
         return identity
     end
+end
+
+"""
+    RunningMean{T}
+
+Running mean of `log(x)` (geometric mean of recent epochs) with outlier detection.
+Used for spike detection on the energy variance and for drop detection on the Jacobian
+scale `s`. Shared across phases, so the baseline survives phase changes.
+
+# Fields
+* `rmean`: running mean of `log(x)`.
+* `init`: `false` until the first valid value has been seen.
+* `n_spike`: number of consecutive outlier epochs.
+"""
+mutable struct RunningMean{T}
+    rmean::T
+    init::Bool
+    n_spike::Int
+end
+RunningMean{T}() where {T} = RunningMean{T}(zero(T), false, 0)
+
+"""
+    is_outlier!(r, x; up = true, factor = 10, max_spike = 10) -> Bool
+
+`true` if `x` deviates from the running (geometric) mean by more than `factor`:
+upward if `up = true` (variance spikes), downward if `up = false` (drops of `s`).
+More than `max_spike` outliers in a row are treated as a new regime: the running mean
+adopts the current value. Non-finite or non-positive `x` is ignored. The running mean
+moves quickly towards the safe side (ρ = 0.3) and slowly towards the unsafe side (ρ = 0.05).
+"""
+function is_outlier!(r::RunningMean{T}, x::T; up::Bool = true,
+                     factor::T = T(10), max_spike::Int = 10) where {T}
+    (isfinite(x) && x > zero(T)) || return false
+    lx = log(x)
+    if !r.init                                         # first valid value of the run
+        r.rmean, r.init, r.n_spike = lx, true, 0
+        return false
+    end
+    dev = up ? lx - r.rmean : r.rmean - lx             # > 0: towards the unsafe side
+    if dev > log(factor)
+        r.n_spike += 1
+        if r.n_spike > max_spike                       # persistent → new regime
+            r.rmean, r.n_spike = lx, 0
+            return false
+        end
+        return true                                    # genuine outlier
+    end
+    r.n_spike = 0
+    ρ = dev < zero(T) ? T(0.3) : T(0.05)               # fast to the safe side, slow otherwise
+    r.rmean = (1 - ρ) * r.rmean + ρ * lx
+    return false
 end
