@@ -100,11 +100,13 @@ function adam(jacobian_buf, vmc_buf, adam_buf, H, ansatz, addrs_n;
 
     apply_loss!(g, E_locs, weights, E_mean, variance, mode)
 
-    mul!(adam_buf.Δθ, jacobian_buf.J, g, 1f0, 0f0)
-    adam_step!(adam_buf, adam_buf.Δθ) 
+    θ  = jacobian_buf.θ
+    Δθ = adam_buf.Δθ
 
-    θ = jacobian_buf.θ
-    @. θ = θ - η*adam_buf.Δθ
+    mul!(Δθ, jacobian_buf.J, g, 1f0, 0f0)
+    adam_step!(adam_buf, Δθ) 
+
+    @. θ = θ - η * Δθ
     update!(ansatz, jacobian_buf, θ)
 
     return E_mean, variance, last_addr, acceptance, η

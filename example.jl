@@ -4,6 +4,8 @@ using QuantumNeuralStates
 # Choose what GPU you are using
 using Metal     # device = mtl
 # using CUDA      # device = cu
+using Random
+Random.seed!(1234)
 
 # -------------------------------------------------------------------
 # Choosing what GPU wull be running (if none -> CPU run is chosen)
@@ -19,7 +21,7 @@ N = 50 # number of particles
 # M = 10 # number of sites
 # addr = near_uniform(BoseFS{N,M}) # Rimu
 # H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
-M = 7*7 # number of sites
+M = 5*5 # number of sites
 addr = BoseFS{missing, M}()                                  # phonon vacuum, variable phonon number
 H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 
@@ -29,7 +31,7 @@ H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 batch  = 1024
 act = relu
 pad = Zeros()
-input = OccupationEncoding((7,7), H; device=device)
+input = OccupationEncoding((5,5), H; device=device)
 model = Chain(input,
               # Dense(nsites(input)*nchannels(input)=>500, tanh; batch=batch, device=device, layer_norm=true), 
               # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
@@ -38,8 +40,8 @@ model = Chain(input,
               # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
               # Dense(500=>1, identity; batch=batch, device=device); 
               Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
               Pool(:sum; device=device),
               Dense(1=>1, identity; batch=batch, device=device);

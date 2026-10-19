@@ -70,7 +70,7 @@ Reference: J. R. Shewchuk, *An Introduction to the Conjugate Gradient Method Wit
 the Agonizing Pain*, https://people.eecs.berkeley.edu/~jrs/papers/cg.pdf (p. 32).
 """
 function cg_solve!(x, J_bar, λ::Float32, r, p_vec, Ap, tmp;
-                   max_iter::Int = 300, tol::Float32 = 1f-2, 
+                   max_iter::Int = 500, tol::Float32 = 1f-2, 
                    null_tol::Float32 = 1f-6, max_null_hits::Int = 3)
 
     fill!(x, 0f0)

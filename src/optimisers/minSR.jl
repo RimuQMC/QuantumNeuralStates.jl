@@ -170,8 +170,9 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf,
     return Δθ, sq, true
 end
 
-const D_LOOSE = 1f0      # free adaptation
-const D_TIGHT = 2f-2     # protection on variance spikes / s drops
+const D_LOOSE = 1f-1    # adaptation
+const D_TIGHT = 2f-2    # protection on variance spikes / s drops
+const ρ = 5f-2          # max 5% relative weight change per step
 
 """
     minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; kwargs...)
@@ -219,7 +220,7 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
                    vmc_sampler=vmc, burnin=burnin, mode=mode)
 
-    # --- variance spike check ------------------------------------------------
+    # --- variance spike check -------------------------------------------------
     var = Array(variance)[1]
     var_spike = is_outlier!(minSR_buf.var_track, var; up = true, factor = 10f0)
 
@@ -232,7 +233,7 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
         return E_mean, variance, last_addr, acceptance, 0f0
     end
 
-    # --- saturation check: s dropped more than 100× below its running mean ------------
+    # --- saturation check: s dropped more than 100× below its running mean ----
     s_drop = is_outlier!(minSR_buf.s_track, sq^2; up = false, factor = 100f0)
     s_drop && @warn "minSR: Jacobian scale s = $(sq^2) dropped more then 100× — possible saturation, tight cap"
 
@@ -264,8 +265,12 @@ function minSR(jacobian_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n;
 
     scale_eu = nrm > max_norm ? max_norm / nrm : 1f0
 
+    # --- 3. relative parameter-space guard ------------------------------------
+    θn        = norm(jacobian_buf.θ)
+    scale_rel = min(1f0, ρ * θn / (η * nrm + eps(Float32)))
+
     # --- effective step -------------------------------------------------------
-    η_eff = η * min(scale_fs, scale_eu)
+    η_eff = η * min(scale_fs, scale_eu, scale_rel)
 
     θ = jacobian_buf.θ
     @. θ = θ - η_eff * Δθ
