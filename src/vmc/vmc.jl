@@ -85,21 +85,66 @@ function vmc_energy(H, ansatz, addrs_n, vmc_buf, jacobian_buf;
     return E_mean, variance, addrs_n, acceptance, weights
 end
 
+"""
+    weighted_sum_kernel!(acc, E_locs, weights)
+
+Kernel that accumulates the weighted sum `acc[1] += Σ_i w_i E_loc,i` with atomic adds.
+Launched with `ndrange = batch`, one thread per sample. `acc` must be zeroed beforehand.
+"""
 @kernel function weighted_sum_kernel!(acc, E_locs, weights)
     i = @index(Global)
     Atomix.@atomic acc[1] += weights[i] * E_locs[i]
 end
 
+"""
+    weighted_variance_kernel!(acc, E_locs, weights, E_mean)
+
+Kernel that accumulates the weighted variance `acc[1] += Σ_i w_i (E_loc,i − ⟨E⟩)²` with
+atomic adds. Launched with `ndrange = batch`, one thread per sample. `acc` must be zeroed
+beforehand, and `E_mean` must already hold `⟨E⟩`.
+"""
 @kernel function weighted_variance_kernel!(acc, E_locs, weights, E_mean)
     i = @index(Global)
-    d = E_locs[i] - E_mean[1]   # <-- index inside kernel
+    d = E_locs[i] - E_mean[1]
     Atomix.@atomic acc[1] += weights[i] * d * d
 end
 
+"""
+    weighted_variance_kernel!(acc, E_locs, weights, E_mean)
+
+Kernel that accumulates the weighted variance `acc[1] += Σ_i w_i (E_loc,i − ⟨E⟩)²` with
+atomic adds. Launched with `ndrange = batch`, one thread per sample. `acc` must be zeroed
+beforehand, and `E_mean` must already hold `⟨E⟩`.
+"""
+@kernel function weighted_variance_kernel!(acc, E_locs, weights, E_mean)
+    i = @index(Global)
+    d = E_locs[i] - E_mean[1]
+    Atomix.@atomic acc[1] += weights[i] * d * d
+end
+
+"""
+    local_energy_stats!(vmc_buf, E_locs, weights, batch) -> (E_mean, variance)
+
+Compute the weighted mean and variance of the local energies,
+
+```math
+\\langle E \\rangle = \\sum_i w_i\\, E_{\\mathrm{loc},i}, \\qquad
+\\sigma^2 = \\sum_i w_i \\left(E_{\\mathrm{loc},i} - \\langle E \\rangle\\right)^2 ,
+```
+
+on the backend of `E_locs`. The results are written into `vmc_buf.E_mean` and
+`vmc_buf.variance`, both (1,) device arrays.
+
+# Arguments
+* `vmc_buf`: holds the output buffers `E_mean` and `variance`, see [`VMCBuffer`](@ref).
+* `E_locs`: (batch,) local energies.
+* `weights`: (batch,) sampler weights, normalised to `Σw = 1`.
+* `batch`: number of samples.
+"""
 function local_energy_stats!(vmc_buf, E_locs, weights, batch)
-    E_mean   = vmc_buf.E_mean
+    E_mean = vmc_buf.E_mean
     variance = vmc_buf.variance
-    backend  = KernelAbstractions.get_backend(E_locs)
+    backend = KernelAbstractions.get_backend(E_locs)
 
     fill!(E_mean, 0f0)
     weighted_sum_kernel!(backend)(E_mean, E_locs, weights; ndrange = batch)

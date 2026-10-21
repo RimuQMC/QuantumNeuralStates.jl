@@ -31,16 +31,15 @@ function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign, m_
 end
 function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
                                  n_logψ, n_sign, m_logψ, m_sign)
-    ham_diag = vmc_buf.ham_diag                 # (B,)   device
-    ham_offdiag = vmc_buf.ham_offdiag_buf.data     # (K, B) device
-    offsets = vmc_buf.offsets                  # (B,)   device, cumulative
-    E_locs = vmc_buf.E_locs
-    median_cpu = vmc_buf.median_cpu
+    ham_diag = vmc_buf.ham_diag                     # (B,)
+    ham_offdiag = vmc_buf.ham_offdiag_buf.data      # (K, B)
+    offsets = vmc_buf.offsets                       # (B,) cumulative
+    E_locs = vmc_buf.E_locs                         # (B,)  
+    median_cpu = vmc_buf.median_cpu                 # (B,) copy of E_locs
 
     backend = KernelAbstractions.get_backend(E_locs)
     _local_energy_kernel!(backend)(E_locs, ham_diag, offsets, ham_offdiag, m_logψ, m_sign,
                                    n_logψ, n_sign; ndrange = ansatz.model.batch)
-    # KernelAbstractions.synchronize(backend)
 
     elocs_clamping!(E_locs, median_cpu)
 end
@@ -102,7 +101,7 @@ function elocs_clamping!(E_locs, median_cpu; q::Float32 = 0.99f0, n_q::Float32 =
         @warn "elocs_clamping!: q-quantile spread = $dq degenerate/non-finite — skipping clipping"
         return E_locs
     end
-    width     = n_q * dq
+    width = n_q * dq
     n_clipped = count(>(width), median_cpu)
     if n_clipped > 0
         E_locs .= clamp.(E_locs, med - width, med + width)     # always clip

@@ -17,7 +17,7 @@ device = select_device()
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
-N = 50 # number of particles
+N = 100 # number of particles
 # M = 10 # number of sites
 # addr = near_uniform(BoseFS{N,M}) # Rimu
 # H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
@@ -48,7 +48,7 @@ model = Chain(input,
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
-                      input_scale_func=sqrt)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+                      input_scale_func=sqrt, mean_field=true)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
@@ -59,8 +59,8 @@ phases = [
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
         stop       = StopBuffer(var_thr=0.001),
-        η          = 0.001f0,
-        skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
+        η          = 0.01f0,
+        skip       = [(1, 20), (2, 20)],  # (epoch, B) → burnin B
         # truncation = 3*3,
         block_size = 10, 
         block_min  = 6, 
@@ -98,9 +98,9 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/example_test4.txt"
+SAVEFILE = "./weights/test_log.txt"
 SAVE_WEIGHTS = false
-LOADFILE = "./weights/example_test4.txt"
+LOADFILE = "./weights/test_log.txt"
 LOAD_WEIGHTS = false
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false

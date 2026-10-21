@@ -45,19 +45,17 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
     # --- STEP 3: Propose new addresses --------------------------------------------
     m_logψ, m_sign = log_psi!(ansatz, vals_offdiag_valid)
+    if ansatz.meanfield !== nothing 
+        ansatz.meanfield(addrs_offdiag_buf.data, offsets, m_logψ)    # MF on offdiags before proposal
+    end
 
     ctmc_state_proposal!(addrs_m, addrs_offdiag_buf.data, offsets, m_logψ, E_locs) # E_locs buffer reuse
 
     # --- STEP 4: NN on starting addresses -----------------------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
-    # copyto!(vals_n_cpu, vals_n)
-    # if ansatz.meanfield !== nothing
-    #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
-    # end
 
     Random.rand!(E_locs)
     accepted .= E_locs .< 0.75f0     # move with prob 0.75 → stay with prob 0.25
-    addrs_n .= ifelse.(accepted, addrs_m, addrs_n)
 
     # --- STEP 5: E_loc, gradient, and weights calculations ------------------------
     if !vmc_buf.start
@@ -68,11 +66,16 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
         jacobian_statistics(ansatz, jacobian_buf.J; idx=vmc_buf.block_idx)
 
         n_logψ, n_sign = log_psi!(ansatz, vals_n)
+        if ansatz.meanfield !== nothing 
+            ansatz.meanfield(addrs_n, n_logψ)    # MF on original addresses
+        end
+
         calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign) # saved in E_locs
         get_ctmc_weights!(weights, m_logψ, offsets, n_logψ) # saved in weights
     end
 
     # --- STEP 6: new sampled addresses --------------------------------------------
+    addrs_n .= ifelse.(accepted, addrs_m, addrs_n)
     new_addrs = addrs_n # reference for addrs_n 
     acc = sum(accepted) / B
 

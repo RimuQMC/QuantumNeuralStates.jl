@@ -37,12 +37,12 @@ mutable struct VMCBuffer{A, VA<:AbstractVector{A},
     E_locs::BAF                     # (B,)    local energies
     accepted::AbstractVector{Bool}  # (B,)    for metropolis acceptance
     median_cpu::Vector{Float32}     # (B,)    host scratch for the E_loc median
+    weights::BAF                    # (B,)    holds sampler weights
 
     # outside VMC use
     block_idx::Int
     E_mean::BAF                     # (1,)
     variance::BAF                   # (1,)
-    weights::BAF                    # (B,)    
 end
 function VMCBuffer(ansatz, addr; K_init = nothing)
     batch = ansatz.model.batch
@@ -87,16 +87,16 @@ function VMCBuffer(ansatz, addr; K_init = nothing)
 
     start = false
 
-    VA  = typeof(addrs_m)
+    VA = typeof(addrs_m)
     GRA = typeof(addrs_offdiag_buf)
     GRF = typeof(ham_offdiag_buf)
-    GC  = typeof(vals_offdiag_buf)
+    GC = typeof(vals_offdiag_buf)
     BAI = typeof(offsets)
     BAF = typeof(ham_diag)
 
     return VMCBuffer{A,VA,GRA,GRF,GC,BAI,BAF}(
                 addrs_m, addrs_offdiag_buf, vals_offdiag_buf, ham_offdiag_buf, ham_diag,
-                start, offsets, E_locs, accepted, median_cpu, 1, E_mean, variance, weights)
+                start, offsets, E_locs, accepted, median_cpu, weights, 1, E_mean, variance)
 end
 
 Base.show(io::IO, ::MIME"text/plain", ::VMCBuffer) = print(io, "VMCBuffer")
@@ -136,9 +136,9 @@ end
 
 @kernel function _ctmc_proposal_kernel!(addrs_m, @Const(addrs_m_all), @Const(offsets),
                                         @Const(distro), @Const(rand_vals))
-    b     = @index(Global, Linear)              # parent
+    b = @index(Global, Linear)                  # parent
     start = _column_start(offsets, b)           # stream positions before parent b
-    stop  = Int(offsets[b])                     # last stream position of parent b
+    stop = Int(offsets[b])                      # last stream position of parent b
 
     if stop > start                             # parent has off-diagonals
         # 1) maximum of this parent's log-weights
@@ -155,8 +155,8 @@ end
 
         # 3) inverse CDF on the same shifted terms
         target = rand_vals[b] * tot
-        cumul  = 0f0
-        k      = stop - start                   # fallback: last off-diagonal (rounding)
+        cumul = 0f0
+        k = stop - start                   # fallback: last off-diagonal (rounding)
         for g in (start + 1):stop
             cumul += exp(distro[g] - mx)
             if cumul >= target
@@ -192,9 +192,9 @@ end
 
 @kernel function _metropolis_proposal_kernel!(addrs_m, @Const(addrs_m_all), @Const(offsets),
                                               @Const(rand_vals))
-    b     = @index(Global, Linear)
+    b = @index(Global, Linear)
     start = _column_start(offsets, b)
-    n     = Int(offsets[b]) - start                     # valid off-diagonals of parent b
+    n = Int(offsets[b]) - start                     # valid off-diagonals of parent b
     if n > 0
         k = min(n, floor(Int, rand_vals[b] * n) + 1)    # uniform row 1..n
         addrs_m[b] = addrs_m_all[k, b]
@@ -217,7 +217,7 @@ end
 
 @kernel function _metropolis_count_ratio_kernel!(ratio, @Const(addrs_m), @Const(offsets),
                                                  hamiltonian, mask)
-    b  = @index(Global, Linear)
+    b = @index(Global, Linear)
     Nn = Int(offsets[b]) - _column_start(offsets, b)
     Nm = 0
     for (a2, v) in offdiagonals(hamiltonian * addrs_m[b])
@@ -319,7 +319,6 @@ function collect_offdiagonals!(addrs_buf::GPUGrowRowBuffer, hmn_buf::GPUGrowRowB
         hmn = hmn_buf.data                      # (K, B)
         _collect_offdiagonals_kernel!(backend)(addrs_offdiag, hmn, diag, offsets,
                                                hamiltonian, addrs_n, mask; ndrange = B)
-        # KernelAbstractions.synchronize(backend)
 
         kmax = Int(maximum(offsets))                    # largest true count
         kmax <= size(addrs_offdiag, 1) && break         # everything fitted

@@ -201,8 +201,7 @@ RunningMean{T}() where {T} = RunningMean{T}(zero(T), false, 0)
 `true` if `x` deviates from the running (geometric) mean by more than `factor`:
 upward if `up = true` (variance spikes), downward if `up = false` (drops of `s`).
 More than `max_spike` outliers in a row are treated as a new regime: the running mean
-adopts the current value. Non-finite or non-positive `x` is ignored. The running mean
-moves quickly towards the safe side (ρ = 0.3) and slowly towards the unsafe side (ρ = 0.05).
+adopts the current value. Non-finite or non-positive `x` is ignored.
 """
 function is_outlier!(r::RunningMean{T}, x::T; up::Bool = true,
                      factor::T = T(10), max_spike::Int = 10) where {T}

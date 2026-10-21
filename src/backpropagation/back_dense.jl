@@ -28,7 +28,7 @@ This function is called inside [`back!`](@ref) function.
 """
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
     out_dim, in_dim = size(W)
-    batch   = size(δz, 2)
+    batch = size(δz, 2)
     J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
     J_b .= δz
 end

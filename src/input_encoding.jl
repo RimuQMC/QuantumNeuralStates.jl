@@ -33,7 +33,7 @@ It must contain as many sites as `H` has modes.
 
 # Example
 ```julia
-enc   = OccupationEncoding((12,), H)
+enc = OccupationEncoding((12,), H)
 model = Chain(enc, Dense(12=>100, relu; batch=batch, device=device), …;
               batch=batch, device=device)
 ```
@@ -75,7 +75,7 @@ and normalisation); the `n·k` (momenta) channels are then built on the device b
 
 # Example
 ```julia
-enc   = MomentumEncoding((4,4), H; device = device)          # C = 3: n, n·kx, n·ky
+enc = MomentumEncoding((4,4), H; device = device)          # C = 3: n, n·kx, n·ky
 model = Chain(enc, Conv((3,3), nchannels(enc)=>16, relu; batch=batch, device=device, pad=Zeros()), …;
               batch=batch, device=device)
 ```
@@ -91,7 +91,7 @@ function MomentumEncoding(sz::NTuple{D,Int}, H; device::Function = identity,
     hasproperty(H, :ks) ||
         error("MomentumEncoding needs a momentum-space Hamiltonian with `ks`, got $(typeof(H))")
     ks = H.ks
-    M  = length(ks)
+    M = length(ks)
     length(first(ks)) == D ||
         error("input size $sz is $D-D but H has $(length(first(ks)))-D momenta")
     prod(sz) == M ||
@@ -233,17 +233,16 @@ encode!(xe, ::InputEncoding) = xe
 
 function encode!(xe, e::MomentumEncoding{D,A,WN}) where {D,A,WN}
     M, _, B = size(xe)
-    nch     = occupation_channel(e)      # where n is
-    off     = WN ? 1 : 0                 # n·k_d goes to channel off + d
+    nch = occupation_channel(e)      # where n is
+    off = WN ? 1 : 0                 # n·k_d goes to channel off + d
     backend = KernelAbstractions.get_backend(xe)
     _momentum_encode_kernel!(backend)(xe, e.K, nch, off; ndrange = (M, B))
-    # KernelAbstractions.synchronize(backend)
     return xe
 end
 
 @kernel function _momentum_encode_kernel!(x, @Const(K), nch::Int, off::Int)
     m, b = @index(Global, NTuple)        # this thread's site m and sample b
-    D    = size(K, 2)                    # number of momentum components (2 for 2D)
+    D = size(K, 2)                       # number of momentum components (2 for 2D)
 
     v = x[m, nch, b]                     # occupation n of site m in sample b
     for d in 1:D                         # d = 1 → k_x, d = 2 → k_y, …

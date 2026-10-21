@@ -43,18 +43,18 @@ where `p_l = _padleft(pad, K)` and `src` is padding-dependent.
 """
 @kernel function _conv_JW_kernel!(J_W, @Const(δz), @Const(x), stride::Int, pad,
                                   ::Val{Nsp}) where Nsp
-    idx   = @index(Global, NTuple)              # (k..., c_in, c_out, b)
-    c_in  = idx[Nsp+1]
+    idx = @index(Global, NTuple)                # (k..., c_in, c_out, b)
+    c_in = idx[Nsp+1]
     c_out = idx[Nsp+2]
-    b     = idx[Nsp+3]
+    b = idx[Nsp+3]
 
-    Ls    = ntuple(d -> size(x, d),   Val(Nsp)) # input grid
-    Lo    = ntuple(d -> size(δz, d),  Val(Nsp)) # output grid
-    Ks    = ntuple(d -> size(J_W, d), Val(Nsp)) # kernel window
-    C_in  = size(x, Nsp+1)
+    Ls = ntuple(d -> size(x, d),   Val(Nsp)) # input grid
+    Lo = ntuple(d -> size(δz, d),  Val(Nsp)) # output grid
+    Ks = ntuple(d -> size(J_W, d), Val(Nsp)) # kernel window
+    C_in = size(x, Nsp+1)
     C_out = size(δz, Nsp+1)
-    x_off = ((b - 1) * C_in  + (c_in  - 1)) * prod(Ls)   # x[:, c_in, b]
-    zi    = ((b - 1) * C_out + (c_out - 1)) * prod(Lo)   # δz[:, c_out, b], advanced per p
+    x_off = ((b - 1) * C_in  + (c_in  - 1)) * prod(Ls)  # x[:, c_in, b]
+    zi = ((b - 1) * C_out + (c_out - 1)) * prod(Lo)     # δz[:, c_out, b], advanced per p
 
     s = zero(eltype(J_W))
     @inbounds for p in CartesianIndices(Lo)     # visits δz in memory order
@@ -66,23 +66,6 @@ where `p_l = _padleft(pad, K)` and `src` is padding-dependent.
     end
     @inbounds J_W[idx...] = s
 end
-# @kernel function _conv_JW_kernel!(J_W, δz, x, stride::Int, pad, ::Val{Nsp}) where Nsp
-#     idx = @index(Global, NTuple)  # (k..., c_in, c_out, b)
-#     c_in = idx[Nsp+1]
-#     c_out = idx[Nsp+2]
-#     b = idx[Nsp+3]
-#
-#     s = zero(eltype(J_W))
-#     @inbounds for p in CartesianIndices(ntuple(d -> size(δz, d), Val(Nsp)))
-#         src = ntuple(d -> _src(pad, 
-#                      (p[d] - 1) * stride + idx[d] - _padleft(pad, size(J_W, d)),
-#                      size(x, d)), Val(Nsp))
-#         if all(i -> i > 0, src) 
-#             s += δz[p, c_out, b] * x[CartesianIndex(src), c_in, b]
-#         end
-#     end
-#     @inbounds J_W[idx...] = s
-# end
 
 """
     _conv_Jb_kernel!(J_b, δz, ::Val{Nsp})
@@ -111,20 +94,20 @@ where `p_l = _padleft(pad, K)` and `tap_inv` is padding-dependent (the inverse o
 """
 @kernel function _conv_dx_kernel!(δx, @Const(δz), @Const(W), stride::Int, pad,
                                   ::Val{Nsp}) where Nsp
-    idx   = @index(Global, NTuple)              # (q..., c_in, b)
-    c_in  = idx[Nsp+1]
-    b     = idx[Nsp+2]
+    idx = @index(Global, NTuple)              # (q..., c_in, b)
+    c_in = idx[Nsp+1]
+    b = idx[Nsp+2]
 
-    Ls    = ntuple(d -> size(δx, d), Val(Nsp))  # input grid
-    Lo    = ntuple(d -> size(δz, d), Val(Nsp))  # output grid
-    Ks    = ntuple(d -> size(W, d),  Val(Nsp))  # kernel window
-    C_in  = size(W, Nsp+1)
+    Ls = ntuple(d -> size(δx, d), Val(Nsp))     # input grid
+    Lo = ntuple(d -> size(δz, d), Val(Nsp))     # output grid
+    Ks = ntuple(d -> size(W, d),  Val(Nsp))     # kernel window
+    C_in = size(W, Nsp+1)
     C_out = size(W, Nsp+2)
     plane = prod(Lo)                            # δz: distance between output channels
-    wk    = prod(Ks)
-    w_o   = wk * C_in                           # W:  distance between output channels
-    z_b   = (b - 1) * C_out * plane             # δz[:, 1, b]
-    w_c   = (c_in - 1) * wk                     # W[:, c_in, 1]
+    wk = prod(Ks)
+    w_o = wk * C_in                             # W:  distance between output channels
+    z_b = (b - 1) * C_out * plane               # δz[:, 1, b]
+    w_c = (c_in - 1) * wk                       # W[:, c_in, 1]
 
     s = zero(eltype(δx))
     @inbounds for k in CartesianIndices(Ks)
@@ -148,27 +131,6 @@ where `p_l = _padleft(pad, K)` and `tap_inv` is padding-dependent (the inverse o
     end
     @inbounds δx[idx...] = s
 end
-# @kernel function _conv_dx_kernel!(δx, δz, W, stride::Int, pad, ::Val{Nsp}) where Nsp
-#     idx = @index(Global, NTuple)      # (q..., c_in, b)
-#     c_in = idx[Nsp+1]
-#     b = idx[Nsp+2]
-#     C_out = size(W, Nsp+2)
-#
-#     s = zero(eltype(δx))
-#     @inbounds for k in CartesianIndices(ntuple(d -> size(W, d), Val(Nsp)))
-#         t  = ntuple(d -> _tap_inv(pad,
-#                      idx[d] - k[d] + _padleft(pad, size(W, d)), size(δx, d)), Val(Nsp))
-#         ok = all(ntuple(d -> (t[d] >= 0) & (t[d] % stride == 0) &
-#                              (t[d] ÷ stride < size(δz, d)), Val(Nsp)))
-#         if ok
-#             p = CartesianIndex(ntuple(d -> t[d] ÷ stride + 1, Val(Nsp)))
-#             for o in 1:C_out
-#                 s += W[k, c_in, o] * δz[p, o, b]
-#             end
-#         end
-#     end
-#     @inbounds δx[idx...] = s
-# end
 
 """
     back!(layer::Conv, buf::ConvBuffer, J_W, J_b, δ, x) -> buf.δ
@@ -201,6 +163,6 @@ function back!(layer::Conv, buf::ConvBuffer, J_W, J_b,
     _conv_JW_kernel!(backend)(J_W, buf.δz, x, layer.stride, layer.pad, Nsp; ndrange = size(J_W))
     _conv_Jb_kernel!(backend)(J_b, buf.δz, Nsp; ndrange = size(J_b))
     _conv_dx_kernel!(backend)(buf.δ, buf.δz, layer.W, layer.stride, layer.pad, Nsp; ndrange = size(buf.δ))
-    # KernelAbstractions.synchronize(backend)
+
     return buf.δ
 end

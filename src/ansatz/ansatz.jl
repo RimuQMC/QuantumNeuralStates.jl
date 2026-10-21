@@ -75,9 +75,9 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
                 invariant regardless the normalisation.
 * `multi_forward_buffer`: if active it holds additional [`MultiForwardBuffer`](@ref).
                 This allows to do forward pass with arbitrary batch size.
-* `Mean-Field`: allows using mean-filed estimate with neural network. See
+* `meanfield`: allows using mean-filed estimate with neural network. See
                 [`MeanField`](@ref).
-* `Truncation`: allows input truncation for graduate training in smaller 
+* `truncation`: allows input truncation for graduate training in smaller 
                 dimensions. See [`TruncationBuffer`](@ref).
 * `neuron_statistics`: allows to print out statistics about neural network. Either,
                 to terminal or external file. See [`neuron_statistics`](@ref).
@@ -86,16 +86,14 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
                 [`jacobian_statistics`](@ref). 
 
 """
-mutable struct NeuralAnsatz{AT<:AnsatzType,A,T<:Real,H,M,X<:AbstractArray,XZ<:AbstractArray,XA<:AbstractArray{A},
-                            XR<:AbstractArray,D,F,MN<:Union{Nothing,Int},MFB<:Union{Nothing,MultiForwardBuffer},
+mutable struct NeuralAnsatz{AT<:AnsatzType,A,T<:Real,H,M,XA<:AbstractArray{A},XR<:AbstractArray,
+                            D,F,MN<:Union{Nothing,Int},MFB<:Union{Nothing,MultiForwardBuffer},
                             MF<:Union{Nothing,MeanField},TR<:Union{Nothing,TruncationBuffer},
                             NS<:Union{Bool,String}, JS<:Union{Bool,String}} <: Gutzwiller.AbstractAnsatz{A,T,0}
     ansatz_type::AT
     hamiltonian::H
     model::M
     logψ_centering::Float32 # centers model output corresponding to ψ amplitude
-    x_cpu_buffer::X
-    z_cpu::XZ
 
     # Rimu FCIQMC helper buffers dynamically filled 
     addrs_buffer::XA
@@ -138,18 +136,14 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
 
     addr = starting_address(hamiltonian)
     dim = size(model.x, 1)
-    x_cpu_buffer = zeros(Float32, size(model.x)[1:end-1]..., batch_size)
-    z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), batch_size)
 
-    nn_output = model(x_cpu_buffer)
+    nn_output = model(model.x)
     logψ_centering = maximum(nn_output)
 
     A = typeof(addr)
     T = Float64
     H = typeof(hamiltonian)
     M = typeof(model)
-    X = typeof(x_cpu_buffer)
-    XZ = typeof(z_cpu)
 
     addrs_buffer  = A[]
     result_buffer = Float64[]
@@ -179,7 +173,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     meanfield = if mean_field === false
         nothing
     else
-        MeanField(hamiltonian)
+        MeanField(hamiltonian; backend=backend)
     end
     MF=typeof(meanfield)
 
@@ -188,8 +182,8 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
 
     NS=typeof(neuron_statistics); JS=typeof(jacobian_statistics)
 
-    return NeuralAnsatz{AT,A,T,H,M,X,XZ,XA,XR,D,F,MN,MFB,MF,TR,NS,JS}(
-                ansatz_type, hamiltonian, model, logψ_centering, x_cpu_buffer, z_cpu, 
+    return NeuralAnsatz{AT,A,T,H,M,XA,XR,D,F,MN,MFB,MF,TR,NS,JS}(
+                ansatz_type, hamiltonian, model, logψ_centering,
                 addrs_buffer, result_buffer, result_dict, first_iter, 
                 input_scale_func, max_norm, normalisation, multi_forward_buffer, 
                 meanfield, trun, neuron_statistics, jacobian_statistics)
@@ -241,7 +235,6 @@ function prepare_input!(na::NeuralAnsatz, addr, x)
     _prepare_input_single_kernel!(backend)(buf, addr, occupation_channel(enc),
                                            na.input_scale_func, na.normalisation;
                                            ndrange = B)
-    # KernelAbstractions.synchronize(backend)
     return x
 end
 function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
@@ -258,7 +251,6 @@ function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
     _prepare_input_kernel!(backend)(buf, addrs, occupation_channel(enc),
                                     na.input_scale_func, na.normalisation;
                                     ndrange = length(addrs))
-    # KernelAbstractions.synchronize(backend)
     return x
 end
 
@@ -279,30 +271,6 @@ end
         buf[m, ch, b] = f(Float32(o[m])) * s
     end
 end
-
-"""
-    prepare_input_occ!(ansatz, addr, x_cpu_buffer) -> x_cpu_buffer
-
-Similar as [`prepare_input!`](@ref), but always converts to occupation 
-representation. This function is used with [`MeanField`](@ref) calculations
-as the mean-field require pure occupation number representation.
-"""
-function prepare_input_occ!(na::NeuralAnsatz, addr, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        x_cpu_buffer .= (Float32.(onr(addr))) #.+ 0.1f0
-        return x_cpu_buffer
-    end
-end
-function prepare_input_occ!(na::NeuralAnsatz, addrs::AbstractVector, x_cpu_buffer)
-    if isa(na.model.layers[1], Dense)
-        # Each column is one address from batch 
-        @inbounds for i in eachindex(addrs)
-            col = @view x_cpu_buffer[:, i]
-            col .= Float32.(onr(addrs[i])) #.+ 0.1f0
-        end
-        return x_cpu_buffer
-    end
-end
  
 """
     compute_logψ(ansatz, addr) -> logψ
@@ -315,37 +283,14 @@ If dispatched with `multi_forward_buffer` it allows for computation in
 arbitrary batch size. See [`MultiForwardBuffer`](@ref).
 """
 function compute_logψ(na::NeuralAnsatz, addr)
-    # x = prepare_input!(na, addr, na.x_cpu_buffer)
     x = prepare_input!(na, addr, na.model.x)
     logψ = na.model(x)
     return logψ
 end
 function compute_logψ(na::NeuralAnsatz, addr, multi_forward_buffer)
-    # x = prepare_input!(na, addr, multi_forward_buffer.x_cpu)
     x = prepare_input!(na, addr, multi_forward_buffer.x)
     logψ = na.model(x, multi_forward_buffer)
     return logψ
-end
-
-"""
-    compute_mflogψ!(ansatz, addr, z) 
-    compute_mflogψ!(ansatz, addr, z, multi_forward_buffer)
-
-Similar as [`compute_logψ`](@ref) but with using [`MeanField`](@ref).
-The function add in-place mean-field value to result `z`.
-
-If dispatched with `multi_forward_buffer` it allows for computation in 
-arbitrary batch size. See [`MultiForwardBuffer`](@ref).
-"""
-function compute_mflogψ!(na::NeuralAnsatz, addr, z)
-    x = prepare_input_occ!(na, addr, na.x_cpu_buffer)
-    logψ = na.meanfield(x, z)
-    return nothing
-end
-function compute_mflogψ!(na::NeuralAnsatz, addr, z, multi_forward_buffer)
-    x = prepare_input_occ!(na, addr, multi_forward_buffer.x_cpu)
-    logψ = na.meanfield(x, z)
-    return nothing
 end
 
 """
@@ -398,13 +343,13 @@ function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
                              vals_buf::GPUGrowColumnBuffer, offsets)
     addrs = addrs_buf.data                                  # (K, B)
     total = Int(@allowscalar offsets[end])                  # = last(offsets)
-    vals  = ensure_capacity!(vals_buf, total)               # (n_out, capacity)
+    vals = ensure_capacity!(vals_buf, total)               # (n_out, capacity)
     n_out = size(vals, 1)
 
     model = ansatz.model
-    mfb   = ansatz.multi_forward_buffer
+    mfb = ansatz.multi_forward_buffer
     xe, x = mfb !== nothing ? (mfb.xe, mfb.x) : (model.xe, model.x)
-    fwd   = size(x, ndims(x))                               # columns of one forward pass
+    fwd = size(x, ndims(x))                               # columns of one forward pass
 
     ch, f, s = occupation_channel(model.enc), ansatz.input_scale_func, ansatz.normalisation
     backend  = KernelAbstractions.get_backend(vals)
@@ -421,7 +366,7 @@ function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
         # copyto!(view(vals, :, offset_current+1 : offset_current+n), view(raw, :, 1:n))
         copyto!(vals, n_out * offset_current + 1, raw, 1, n_out * n)
     end
-    # KernelAbstractions.synchronize(backend)
+
     return vals
 end
 
@@ -486,132 +431,6 @@ Number of stream positions before column `b`: the end of the previous column,
 column is `k = g - _column_start(offsets, b)`.
 """
 @inline _column_start(offsets, b) = b == 1 ? 0 : Int(@inbounds offsets[b - 1])
-
-
-
-# function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
-#                              vals_buf::GPUGrowColumnBuffer, offsets)
-#     addrs = addrs_buf.data                          # (K, B)
-#     K, B  = size(addrs)
-#     vals  = ensure_capacity!(vals_buf, K * B)       # (n_out, capacity)
-#
-#     mfb   = ansatz.multi_forward_buffer
-#     model = ansatz.model
-#     xe, x = mfb !== nothing ? (mfb.xe, mfb.x) : (model.xe, model.x)
-#     batch = size(x, ndims(x))
-#
-#     n_cols = batch ÷ K                              # addrs columns per forward pass
-#     n_cols >= 1 || error("forward batch ($batch) smaller than K ($K) - num_offdiagonals.")
-#     n_chunks = cld(B, n_cols)
-#
-#     backend = KernelAbstractions.get_backend(vals)
-#     ch, f, s = occupation_channel(model.enc), ansatz.input_scale_func, ansatz.normalisation
-#
-#     for c in 1:n_chunks
-#         i_start = (c - 1) * n_cols + 1
-#         i_end   = min(c * n_cols, B)
-#         n_real  = i_end - i_start + 1               # columns of addrs in this chunk
-#
-#         _prepare_input_chunk_kernel!(backend)(xe, addrs, offsets, i_start, ch, f, s;
-#                                               ndrange = n_real)
-#         KernelAbstractions.synchronize(backend)
-#
-#         raw = mfb !== nothing ? model(x, mfb) : model(x)          # forward pass
-#
-#         _store_outputs_chunk_kernel!(backend)(vals, raw, offsets, i_start, K;
-#                                               ndrange = n_real)
-#         KernelAbstractions.synchronize(backend)
-#     end
-#     return vals
-# end
-# # writes the valid off-diagonals of addrs[:, b] into xe
-# @kernel function _prepare_input_chunk_kernel!(xe, @Const(addrs), @Const(offsets),
-#                                               i_start::Int, ch::Int, f, s)
-#     n = @index(Global, Linear)                      # position in the chunk
-#     b = i_start + n - 1                             # column of addrs
-#     K = size(addrs, 1)
-#     for k in 1:offsets[b]                           # valid off-diagonals only
-#         o = onr(addrs[k, b])
-#         for m in 1:length(o)
-#             xe[m, ch, (n - 1) * K + k] = f(Float32(o[m])) * s
-#         end
-#     end
-# end
-# # copies the outputs of the valid off-diagonals back to vals
-# @kernel function _store_outputs_chunk_kernel!(vals, @Const(raw), @Const(offsets),
-#                                               i_start::Int, K::Int)
-#     n = @index(Global, Linear)                      # position in the chunk
-#     b = i_start + n - 1                             # column of addrs
-#     for k in 1:offsets[b]
-#         for o in 1:size(raw, 1)
-#             vals[o, (b - 1) * K + k] = raw[o, (n - 1) * K + k]
-#         end
-#     end
-# end
-# function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, 
-#                              vals_buf::GPUGrowBuffer)
-#     total = length(flat_addrs_m)
-#     flat_vals_m = ensure_capacity!(vals_buf, total) # view into vals_buf.data, sized exactly to `total`
-#
-#     buf   = ansatz.multi_forward_buffer
-#     batch = buf !== nothing ? buf.buffer_size : ansatz.model.batch
-#     n_chunks = cld(total, batch)
-#
-#     for c in 1:n_chunks
-#         i_start = (c-1) * batch + 1
-#         i_end   = min(c * batch, total)
-#         n_real  = i_end - i_start + 1
-#         tmp_addrs = view(flat_addrs_m, i_start:i_end)
-#
-#         raw = buf !== nothing ? compute_logψ(ansatz, tmp_addrs, buf) : compute_logψ(ansatz, tmp_addrs)
-#
-#         if ansatz.meanfield !== nothing
-#             mfresult = buf !== nothing ? compute_mflogψ(ansatz, tmp_addrs, buf) : compute_mflogψ(ansatz, tmp_addrs)
-#             raw .= raw .+ mfresult
-#         end
-#
-#         copyto!(view(flat_vals_m, :, i_start:i_end), view(raw, :, 1:n_real))
-#     end
-#     return flat_vals_m
-# end
-# function multi_compute_logψ!(ansatz::NeuralAnsatz, flat_addrs_m::AbstractArray, flat_vals_m::AbstractArray)    
-#     empty!(flat_vals_m) 
-#     if ansatz.multi_forward_buffer !== nothing
-#         batch = ansatz.multi_forward_buffer.buffer_size
-#     else
-#         batch = ansatz.model.batch
-#     end
-#     total = length(flat_addrs_m)
-#     n_chunks = cld(total, batch)
-#     # chunked NN forward pass over all off-diagonal addresses
-#     for c in 1:n_chunks
-#         i_start = (c-1) * batch + 1
-#         i_end   = min(c * batch, total)
-#         n_real  = i_end - i_start + 1
-#
-#         tmp_addrs = view(flat_addrs_m, i_start:i_end)  # slicing of vector for batch size pass
-#
-#         if ansatz.multi_forward_buffer !== nothing
-#             raw = compute_logψ(ansatz, tmp_addrs, ansatz.multi_forward_buffer)
-#             copyto!(ansatz.multi_forward_buffer.z_cpu, raw)    
-#
-#             if ansatz.meanfield !== nothing 
-#                 compute_mflogψ!(ansatz, tmp_addrs, ansatz.multi_forward_buffer.z_cpu, ansatz.multi_forward_buffer)
-#             end
-#
-#             append!(flat_vals_m, view(ansatz.multi_forward_buffer.z_cpu, :, 1:n_real))
-#         else
-#             raw = compute_logψ(ansatz, tmp_addrs)
-#             copyto!(ansatz.z_cpu, raw)    
-#
-#             if ansatz.meanfield !== nothing
-#                 compute_mflogψ!(ansatz, tmp_addrs, ansatz.z_cpu)
-#             end
-#
-#             append!(flat_vals_m, view(ansatz.z_cpu, :, 1:n_real))
-#         end
-#     end
-# end
 
 """
     compute_ψ_64(ansatz, addr) -> Float64.(exp.(logψ))

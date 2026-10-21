@@ -86,6 +86,16 @@ function _write_input_scale(io::IO, ansatz)
     println(io, "    normalisation:  ", ansatz.normalisation)
 end
 
+""" 
+    _write_mf(io, ansatz)
+
+Write into IO stream if mean-field was used for training.
+"""
+function _write_mf(io::IO, ansatz)
+    println(io, "Mean-Field:")
+    println(io, "    used: ", ansatz.meanfield !== nothing)
+end
+
 """
     save_master(filename, θ, addrs, ansatz; num_width=3)
 
@@ -106,6 +116,9 @@ and input scaling match the freshly-constructed `ansatz` before restoring `θ`.
         max_norm:
         normalisation:
 
+    Mean-Field:
+        used: true
+
     Weights:
         <Float32 values>
 
@@ -120,6 +133,10 @@ and input scaling match the freshly-constructed `ansatz` before restoring `θ`.
 
 # Keywords
 * `num_width`: column width used when formatting `addrs`.
+
+# Notes
+* The mean-field itself is not saved: it is rebuilt from the Hamiltonian when the
+    `ansatz` is constructed.
 """
 function save_master(filename::String, θ::AbstractVector, addrs::AbstractVector, ansatz;
                              num_width::Int=3)
@@ -127,6 +144,8 @@ function save_master(filename::String, θ::AbstractVector, addrs::AbstractVector
         _write_architecture(io, ansatz.model)
         println(io)
         _write_input_scale(io, ansatz)
+        println(io)
+        _write_mf(io, ansatz)
         println(io)
         _write_weights(io, θ)
         println(io)
@@ -180,11 +199,13 @@ function load_master(ansatz, filename::String)
     lines = readlines(filename)
     # find the data lines by looking for the section headers
     arch_idx = findfirst(==("Architecture:"), lines)
-    sc_idx= findfirst(==("Input Scaling:"), lines)
+    sc_idx = findfirst(==("Input Scaling:"), lines)
+    mf_idx = findfirst(==("Mean-Field:"), lines)
     w_idx = findfirst(==("Weights:"), lines)
     i_idx = findfirst(==("Inputs:"),  lines)
     @assert arch_idx !== nothing "Missing 'Architecture:' header"
     @assert sc_idx !== nothing "Missing 'Input Scaling:' header"
+    @assert mf_idx !== nothing "Missing 'Mean-Field:' header"
     @assert w_idx !== nothing "Missing 'Weights:' header"
     @assert i_idx !== nothing "Missing 'Inputs:' header"
 
@@ -235,6 +256,16 @@ function load_master(ansatz, filename::String)
 
     weights_line = lines[w_idx + 1]
     inputs_line  = lines[i_idx + 1]
+
+    # --- mean field ---
+    saved_mf = parse(Bool, strip(parse_kv(lines[mf_idx + 1])))   # "true" / "false"
+
+    has_mf = ansatz.meanfield !== nothing
+    if saved_mf != has_mf
+        error("Weights were trained $(saved_mf ? "with" : "without") a mean-field, " *
+              "but the current ansatz has $(has_mf ? "a" : "no") mean-field. " *
+              "Construct the ansatz $(saved_mf ? "with" : "without") the mean-field to load these weights.")
+    end
 
     # --- line 2: weights ---
     θ_cpu = parse.(Float32, split(weights_line))

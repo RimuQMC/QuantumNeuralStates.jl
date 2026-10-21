@@ -86,7 +86,7 @@ function cg_solve!(x, J_bar, λ::Float32, r, p_vec, Ap, tmp;
         return true, 0, 0f0
     end
 
-    rr        = rr0
+    rr = rr0
     null_hits = 0
 
     for iter in 1:max_iter
@@ -114,7 +114,7 @@ function cg_solve!(x, J_bar, λ::Float32, r, p_vec, Ap, tmp;
 
         # --- standard CG update ----------------------------------------------
         pAp = pKp + λ * pp              # pᵀAp, assembled without extra dot
-        α   = rr / pAp
+        α = rr / pAp
         if !isfinite(α)
             @warn "cg_solve!: step size α = $α is Inf/NaN at iter $iter " *
                   "(rr = $rr, pᵀAp = $pAp) — breakdown before x update"

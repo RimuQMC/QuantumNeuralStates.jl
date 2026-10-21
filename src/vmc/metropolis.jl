@@ -48,22 +48,19 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
     vals_m = compute_logψ(ansatz, addrs_m)
     copyto!(ansatz.model.z_last, vals_m)
-    # if ansatz.meanfield !== nothing
-    #     compute_mflogψ!(ansatz, addrs_m, ansatz.z_cpu)
-    # end
 
     # --- STEP 2.5: NN on off-diagonals (before the addrs_n forward pass!) ---------
     if vmc_buf.start
         vals_offdiag = multi_compute_logψ!(ansatz, addrs_offdiag_buf, vals_offdiag_buf, offsets)
         vals_offdiag_valid = view(vals_offdiag, :, 1:total_offdiag)
         offdiag_logψ, offdiag_sign = log_psi!(ansatz, vals_offdiag_valid)
+        if ansatz.meanfield !== nothing
+            ansatz.meanfield(addrs_offdiag_buf.data, offsets, offdiag_logψ)   # MF on off-diagonals
+        end
     end
 
     # --- STEP 3: NN on starting addresses -----------------------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
-    # if ansatz.meanfield !== nothing
-    #     compute_mflogψ!(ansatz, addrs_n, vals_n_cpu)
-    # end
 
     if !vmc_buf.start
         # no need to calculate gradient during thermalization
@@ -77,6 +74,10 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # --- STEP 4: acceptance of proposals ------------------------------------------
     m_logψ, m_sign = log_psi!(ansatz, ansatz.model.z_last)
     n_logψ, n_sign = log_psi!(ansatz, vals_n)
+    if ansatz.meanfield !== nothing
+        ansatz.meanfield(addrs_m, m_logψ)      # MF on proposals
+        ansatz.meanfield(addrs_n, n_logψ)      # MF on current walkers
+    end
 
     # A = |ψ_m|²/|ψ_n|² · N_n/N_m   (count ratio stored in E_locs)
     m_logψ .= exp.(clamp.(2f0 .* (m_logψ .- n_logψ), -80f0, 80f0)) .* E_locs # (B,)
@@ -87,7 +88,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     acc = sum(accepted)/B
 
     # --- STEP 5: new sampled addresses --------------------------------------------
-    addrs_n  .= ifelse.(accepted, addrs_m, addrs_n)     # (B,) - reuse addrs_n as buffer
+    addrs_n .= ifelse.(accepted, addrs_m, addrs_n)     # (B,) - reuse addrs_n as buffer
     new_addrs = addrs_n     # reference for addrs_n 
 
     # --- STEP 6: E_loc calculations and weights -----------------------------------

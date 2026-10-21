@@ -1,6 +1,26 @@
 # https://journals.aps.org/pr/pdf/10.1103/PhysRev.90.297
 # https://arxiv.org/pdf/1510.04934
 
+"""
+    calc_omega_denominator(h::Rimu.FroehlichPolaron, kidx::Int, eta) -> ε_k
+
+Energy denominator of the Lee–Low–Pines mean-field for phonon mode `kidx`,
+
+```math
+\\varepsilon_k = \\omega + \\frac{k^2}{2m} - \\frac{\\mathbf{k}\\cdot\\mathbf{P}}{m}\\,(1 - \\eta),
+\\qquad m = \\frac{\\texttt{two\\_m}}{2},
+```
+
+where `P = h.p` is the total momentum and `η` the fraction of `P` carried by the
+phonons, `P_ph = η P` (see [`solve_self_consistent_eta`](@ref)).
+
+# Arguments
+* `h`: Froehlich polaron Hamiltonian.
+* `kidx`: index of the phonon mode, `h.ks[kidx]`.
+* `eta`: phonon momentum fraction `η`.
+
+See also [`calc_f`](@ref).
+"""
 function calc_omega_denominator(h::Rimu.FroehlichPolaron{T,M,D}, kidx::Int, eta::T) where {T,M,D}
     k = h.ks[kidx]
     k_dot_P = zero(T)
@@ -15,6 +35,31 @@ function calc_omega_denominator(h::Rimu.FroehlichPolaron{T,M,D}, kidx::Int, eta:
     return T(h.omega) + k_squared / two_m - T(2) * k_dot_P * (one(T) - eta) / two_m
 end
 
+"""
+    calc_f(h::Rimu.FroehlichPolaron, eta) -> f
+
+Coherent-state displacements of the Lee–Low–Pines mean-field,
+
+```math
+f_k = \\frac{v_k}{\\varepsilon_k},
+```
+
+with the coupling `v_k` from `Rimu.Hamiltonians.calc_vk` and the denominator `ε_k` from
+[`calc_omega_denominator`](@ref). The sign follows the convention
+`H = … − Σ_k v_k (a_k^† + a_k)`.
+
+# Arguments
+* `h`: Fröhlich polaron Hamiltonian.
+* `eta`: phonon momentum fraction `η`.
+
+# Returns
+* `f`: (M,) one `f_i` per phonon mode; `f_k = 0` for modes with `v_k = 0`
+    (the `k = 0` mode).
+
+# Notes
+* Throws an error if `ε_k ≤ 0` for any mode. The mean-field is then beyond its range of
+    validity (the total momentum is too large for a bound polaron within this ansatz).
+"""
 function calc_f(h::Rimu.FroehlichPolaron{T,M,D}, eta::T) where {T,M,D}
     f = zeros(T, M)
     for i in 1:M
@@ -27,6 +72,44 @@ function calc_f(h::Rimu.FroehlichPolaron{T,M,D}, eta::T) where {T,M,D}
     return f
 end
 
+"""
+    solve_self_consistent_eta(h::Rimu.FroehlichPolaron; tol = sqrt(eps(T)), max_iter = 500)
+            -> (eta, f)
+
+Solve the Lee–Low–Pines self-consistency for the phonon momentum fraction `η` by fixed-point
+iteration. The phonon momentum of the coherent state must equal the fraction `η` of the
+total momentum,
+
+```math
+\\eta\\,\\mathbf{P} = \\sum_k \\mathbf{k}\\, f_k^2
+\\quad\\Longrightarrow\\quad
+\\eta = \\frac{1}{P^2}\\sum_k (\\mathbf{k}\\cdot\\mathbf{P})\\, f_k^2(\\eta) ,
+```
+
+with `f_k(η)` from [`calc_f`](@ref).
+
+# Arguments
+* `h`: Froehlich polaron Hamiltonian.
+
+# Keyword Arguments
+* `tol`: relative convergence tolerance on `η` (default `sqrt(eps(T))`, ≈ 3.5e-4 for
+    `Float32` and ≈ 1.5e-8 for `Float64`).
+* `max_iter`: maximal number of fixed-point iterations (default `500`).
+
+# Returns
+* `eta`: converged phonon momentum fraction.
+* `f`: (M,) `f_k(η)` at the converged `η`.
+
+# Notes
+* For `P = 0` there is no preferred direction, so `η = 0` by symmetry and no iteration
+    is performed.
+* If the iteration does not converge within `max_iter`, a warning is issued and the last
+    iterate is returned.
+
+# References
+* T. D. Lee, F. E. Low, D. Pines, Phys. Rev. 90, 297 (1953).
+* arXiv:1510.04934.
+"""
 function solve_self_consistent_eta(h::Rimu.FroehlichPolaron{T,M,D};
                                      tol::T = sqrt(eps(T)), # ≈ 3.5e-4 (Float32), 1.5e-8 (Float64)
                                      max_iter::Int = 500) where {T,M,D}
@@ -67,10 +150,25 @@ function solve_self_consistent_eta(h::Rimu.FroehlichPolaron{T,M,D};
 end
 
 """
-    strong_coupling_amplitudes(h) -> β
+    strong_coupling_amplitudes(h::Rimu.FroehlichPolaron) -> β
 
 Strong-coupling coherent amplitudes, Eq. (4.6) - Yosef:
-β_k = 2 V_k (λ²/(λ² + k²))^{3/2},  λ = 3πα/8.
+
+```math
+\\beta_k = 2 V_k \\left(\\frac{\\lambda^2}{\\lambda^2 + k^2}\\right)^{3/2},
+\\qquad \\lambda = \\frac{3\\pi\\alpha}{8} .
+```
+
+# Arguments
+* `h`: Froehlich polaron Hamiltonian, with coupling constant `h.alpha`.
+
+# Returns
+* `β`: (M,) amplitudes, one per phonon mode; `β_k = 0` for modes with `V_k = 0`
+    (the `k = 0` mode).
+
+# Notes
+* Not used by [`MeanField`](@ref) at the moment; the weak-coupling Lee–Low–Pines
+    displacements from [`solve_self_consistent_eta`](@ref) are used instead.
 """
 function strong_coupling_amplitudes(h::Rimu.FroehlichPolaron{T,M,D}) where {T,M,D}
     λ  = T(3π * h.alpha / 8)
@@ -88,25 +186,38 @@ function strong_coupling_amplitudes(h::Rimu.FroehlichPolaron{T,M,D}) where {T,M,
     return β
 end
 
+"""
+    _mf_func_froehlich(o, params, T) -> T
 
-function forward_logMF_FroehlichND!(result::AbstractArray, input::AbstractArray, params)
-    log_f_row, const_term = params
-    M, B = size(input)
+Log-amplitude of the Froehlich coherent-state mean-field for occupation numbers `o`,
 
-    # Term 2: result (1,B) = log_f_row (1,M) * input (M,B)
-    mul!(result, log_f_row, input, 1.0, 1.0)
+```math
+\\log\\psi_{\\mathrm{MF}}(n) = \\sum_i n_i \\log|f_i| - \\tfrac{1}{2}\\sum_i \\log(n_i!)
+                              - \\tfrac{1}{2}\\sum_i f_i^2 .
+```
 
-    # Term 3: subtract 0.5 * sum_i loggamma(n_i + 1) per column, no temp array
-    @inbounds for b in 1:B
-        s = 0.0
-        for i in 1:M
-            s += loggamma(input[i, b] + 1)
-        end
-        result[1, b] -= 0.5 * s
+# Arguments
+* `o`: occupation numbers `onr(addr)` of one configuration.
+* `params`: `(log_f, lgf, const_term)` from [`_choose_meanfield_function`](@ref), where
+    `lgf[n+1] = log(n!)` is a look-up table and `const_term = -0.5 Σ f²`.
+* `T`: element type of the result.
+
+# Notes
+* Occupations with `n ≥ length(lgf)` use the Stirling formula
+    `log(n!) ≈ n log n − n + ½ log(2πn) + 1/(12n)`.
+* Called inside [`_mf_addrs_kernel!`](@ref) and [`_mf_offdiag_kernel!`](@ref).
+"""
+@inline function _mf_func_froehlich(o, params, ::Type{T}) where T
+    log_f, lgf, const_term = params
+    NT  = Int32(length(lgf))
+    acc = zero(T)
+    @inbounds for i in 1:length(o)
+        ni = Int32(o[i])
+        x  = T(ni)
+        acc += x * log_f[i]                         # Σ n_i log f_i
+        lg = ni < NT ? lgf[ni + Int32(1)] :         # log(n_i!) from table
+             x * log(x) - x + T(0.5) * log(T(2π) * x) + inv(T(12) * x)    # Stirling
+        acc -= T(0.5) * lg
     end
-
-    # Add the fixed constant to every column
-    result .+= const_term
-
-    return result
+    return acc + T(const_term)
 end

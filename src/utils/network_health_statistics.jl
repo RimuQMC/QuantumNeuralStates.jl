@@ -6,10 +6,10 @@ Prints into chosen `io` statistics of array as mean,variance, minimum, and maxim
 This is meant for investigating health of Neural Network's parameters.
 """
 function _print_stats(name, v; io=stdout)
-    m   = (mean(v))
-    s2  = (var(v))
-    mn  = (minimum(v))
-    mx  = (maximum(v))
+    m = (mean(v))
+    s2 = (var(v))
+    mn = (minimum(v))
+    mx = (maximum(v))
     @printf(io, "  %-14s mean=% .4e   var=% .4e   min=% .4e   max=% .4e\n", name, m, s2, mn, mx)
 end
 
@@ -22,39 +22,39 @@ function _activation_health(a, z, act; sat_thresh=0.95, io=stdout)
     n_total = length(a)
 
     if act === tanh || act === tanh_fast
-        n_sat     = Int(sum(abs.(z) .> Float32(sat_thresh)))     # broadcast + sum, GPU-safe
-        n_lin     = Int(sum(abs.(a) .< Float32(0.1)))
-        frac_sat  = n_sat / n_total
-        frac_lin  = n_lin / n_total
+        n_sat = Int(sum(abs.(z) .> Float32(sat_thresh)))     # broadcast + sum, GPU-safe
+        n_lin = Int(sum(abs.(a) .< Float32(0.1)))
+        frac_sat = n_sat / n_total
+        frac_lin = n_lin / n_total
         @printf(io, "   %-14s |z|>%.2f : %6.2f%%  (%d / %d)\n",
                 "saturation (Tanh)  ", sat_thresh, 100*frac_sat, n_sat, n_total)
         @printf(io, "   %-14s |a|<0.10 : %6.2f%%  (%d / %d)   [near-linear regime]\n",
                 "under-driven (Tanh)", 100*frac_lin, n_lin, n_total)
 
     elseif act === sigmoid || act === sigmoid_fast
-        n_sat     = Int(sum(abs.(2 .* z .- 1) .> Float32(sat_thresh)))   # z near 0 or 1, GPU-safe
-        n_lin     = Int(sum(abs.(a) .< Float32(0.1)))
-        frac_sat  = n_sat / n_total
-        frac_lin  = n_lin / n_total
+        n_sat = Int(sum(abs.(2 .* z .- 1) .> Float32(sat_thresh)))   # z near 0 or 1, GPU-safe
+        n_lin = Int(sum(abs.(a) .< Float32(0.1)))
+        frac_sat = n_sat / n_total
+        frac_lin = n_lin / n_total
         @printf(io, "   %-14s |2z-1|>%.2f : %6.2f%%  (%d / %d)\n",
                 "saturation (Sigmoid)  ", sat_thresh, 100*frac_sat, n_sat, n_total)
         @printf(io, "   %-14s |a|<0.10    : %6.2f%%  (%d / %d)   [near-linear regime]\n",
                 "under-driven (Sigmoid)", 100*frac_lin, n_lin, n_total)
 
     elseif act === relu
-        n_dead    = Int(sum(a .<= 0))
+        n_dead = Int(sum(a .<= 0))
         frac_dead = n_dead / n_total
         @printf(io, "   %-14s a<=0        : %6.2f%%  (%d / %d)  [zero-gradient units]\n",
                 "dead (ReLU)", 100*frac_dead, n_dead, n_total)
 
         per_neuron_dead = vec(all(a .<= 0, dims=2))     # reduction along batch dim, GPU-safe
-        n_always_dead   = Int(sum(per_neuron_dead))
-        n_neurons       = length(per_neuron_dead)
+        n_always_dead = Int(sum(per_neuron_dead))
+        n_neurons = length(per_neuron_dead)
         @printf(io, "   %-14s always-dead : %6.2f%%  (%d / %d neurons dead for ENTIRE batch)\n",
                 "dead (ReLU)", 100*n_always_dead/n_neurons, n_always_dead, n_neurons)
 
     elseif act === gelu || act === gelu_fast
-        n_starved    = Int(sum(a .< -3.0))
+        n_starved = Int(sum(a .< -3.0))
         frac_starved = n_starved / n_total
         @printf(io, "   %-14s z < -3.0 : %6.2f%%  (%d / %d)  [gradient-starved tail]\n",
                 "starved (GeLU)", 100*frac_starved, n_starved, n_total)
@@ -120,7 +120,7 @@ function neuron_statistics(ansatz, io; sat_thresh=0.95, idx::Int=0)
             a = layer.a
             z = layer.z
             nW, N = ndims(W), ndims(a)
-            C, B  = size(a, N-1), size(a, N)
+            C, B = size(a, N-1), size(a, N)
 
             println(io, "  "*"─"^90)
             println(io, "  Layer $li  Conv($(size(W)[1:nW-2]), $(size(W,nW-1))=>$(size(W,nW)),  act=$act,",
@@ -191,7 +191,7 @@ function jacobian_statistics(J::AbstractMatrix, io; lambda::Float32=1f-3, idx::I
     sv = svdvals(O)                      # descending, length = min(n_params, B)
     sigma_thresh = sqrt(lambda)          # σ² > λ  <=>  σ > sqrt(λ)
     n_trusted = count(>(sigma_thresh), sv)
-    n_total   = length(sv)
+    n_total = length(sv)
 
     col_norms = sqrt.(sum(abs2, O; dims=1)) # ||O_c|| per sample norm
     Ohat = O ./ max.(col_norms, 1f-12) # O_ic / ||O_c||

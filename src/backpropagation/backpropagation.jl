@@ -116,10 +116,10 @@ function JacobianBuffer(ansatz, buffers::Tuple)
         if ln !== nothing
             r_γ = (offset+1):(offset+nb);  offset += nb
             r_β = (offset+1):(offset+nb);  offset += nb
-            rs        = (rs..., LayerRange(r_W, r_b, r_γ, r_β))
+            rs = (rs..., LayerRange(r_W, r_b, r_γ, r_β))
             ln_zipped = (ln_zipped..., ln)
         else
-            rs        = (rs..., LayerRange(r_W, r_b))
+            rs = (rs..., LayerRange(r_W, r_b))
             ln_zipped = (ln_zipped..., nothing)
         end
     end

@@ -130,6 +130,15 @@ with different parameters.
 * `stop`: define a early-stop conditions, see [`StopBuffer`](@ref).
 * `η`: learning rate used with parameters update (default `0.001f0`).
 * `λ`: Tikhonov regularisation used in [`minSR`](@ref) optimiser (default `0.001f0`).
+* `d_loose`: maximal Fubini–Study distance per step of [`minSR`](@ref) in normal
+        operation (default `0.1f0`, ≈ 5.7°). Typical values lie in `[0.01, 0.1]`, 
+        see [`minSRBuffer`](@ref).
+* `d_tight`: maximal Fubini–Study distance per step of [`minSR`](@ref) after a variance
+        spike (default `0.01f0`, ≈ 0.57°). Must not exceed `d_loose`; otherwise
+        `d_loose` is set to `d_tight`, see [`minSRBuffer`](@ref).
+* `ρ`: maximal relative weight change `η‖Δθ‖/‖θ‖` per step of [`minSR`](@ref)
+        (default `0.05f0`). During a drop of the Jacobian scale `s` it is tightened to
+        `0.1 ρ`, see [`minSRBuffer`](@ref).
 * `skip`: define how many VMC steps should be skip before parameters update is made.
         Thermalisation of VMC sampler (default `(1, 100)`). Multiple options can be 
         stuck in Tuple of form `(epoch, skip)` - which means from epoch number 
@@ -154,6 +163,8 @@ with different parameters.
 * `max_epochs`: maximum epochs in learning loop (default `1000`). If none of
         early-stopping conditions are met this is safe-check stop condition. 
 
+# Notes
+* `λ`, `d_loose`, `d_tight`, and `ρ` are only used by the [`minSR`](@ref) optimisers.
 """
 Base.@kwdef struct TrainingPhase
     mode::Union{Symbol, Tuple} = :energy
@@ -162,6 +173,9 @@ Base.@kwdef struct TrainingPhase
     stop::StopBuffer = StopBuffer()
     η::Float32 = 0.001f0
     λ::Float32 = 0.001f0
+    d_loose::Float32 = 1f-1
+    d_tight::Float32 = 1f-2
+    ρ::Float32 = 5f-2
     skip::Vector{Tuple{Int,   Int}} = [(1, 100)]
     η_decrease::Vector{Tuple{Float32,Float32}} = []
     truncation::Union{Nothing, Int} = nothing
@@ -187,12 +201,17 @@ end
 function _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
     opt = phase.optimiser
     vmc = phase.vmc_sampler
+    d_loose = phase.d_loose
+    d_tight = phase.d_tight
+    ρ = phase.ρ
 
     if opt === :minSR return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                 velocity=false, β=0.9f0, 
+                                                 velocity=false, β=0.9f0,  
+                                                 d_loose=d_loose, d_tight=d_tight, ρ=ρ,
                                                  var_track=var_track, s_track=s_track), vmc
     elseif opt === :minSR_momentum return :minSR, minSRBuffer(ansatz.model.batch, n_params, ansatz; 
-                                                              velocity=true,  β=0.9f0, 
+                                                              velocity=true,  β=0.9f0,
+                                                              d_loose=d_loose, d_tight=d_tight, ρ=ρ,
                                                               var_track=var_track, s_track=s_track), vmc
     elseif opt === :descent return :descent, DescentBuffer(ansatz.model.batch, n_params, ansatz), vmc
     elseif opt === :adam return :adam, AdamBuffer(ansatz.model.batch, n_params, ansatz; 
