@@ -110,19 +110,6 @@ beforehand, and `E_mean` must already hold `⟨E⟩`.
 end
 
 """
-    weighted_variance_kernel!(acc, E_locs, weights, E_mean)
-
-Kernel that accumulates the weighted variance `acc[1] += Σ_i w_i (E_loc,i − ⟨E⟩)²` with
-atomic adds. Launched with `ndrange = batch`, one thread per sample. `acc` must be zeroed
-beforehand, and `E_mean` must already hold `⟨E⟩`.
-"""
-@kernel function weighted_variance_kernel!(acc, E_locs, weights, E_mean)
-    i = @index(Global)
-    d = E_locs[i] - E_mean[1]
-    Atomix.@atomic acc[1] += weights[i] * d * d
-end
-
-"""
     local_energy_stats!(vmc_buf, E_locs, weights, batch) -> (E_mean, variance)
 
 Compute the weighted mean and variance of the local energies,

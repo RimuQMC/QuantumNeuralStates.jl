@@ -64,9 +64,7 @@ set to be one dimensional.
 """
 function grid_dims(H)
     if hasproperty(H, :geometry)
-        g = H.geometry
-        hasmethod(size, Tuple{typeof(g)}) && return size(g)         # e.g. size(g) == (L,L)
-        hasproperty(g, :dims) && return Tuple(g.dims)
+        return Tuple(size(H.geometry))
     end
     # Fallback: derive L from D and M if only those are exposed
     # D = typeof(H).parameters[3] # dimension is 3rd type
