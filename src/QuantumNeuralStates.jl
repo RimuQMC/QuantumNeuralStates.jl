@@ -23,7 +23,7 @@ Machine Learning package designed to work with Rimu ([online](https://RimuQMC.gi
 # QuantumNeuralStates
 
 function __init__()
-    default_logger()
+    default_logger() # to enable Rimu work on GPU
 end
 
 include("./activations.jl")

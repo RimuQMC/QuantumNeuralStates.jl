@@ -27,7 +27,7 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Gutzwiller = {rev = "master", url = "https://github.com/RimuQMC/Gutzwiller.jl"}
 
 [compat]
-Atomix = "1.2.1"
+Atomix = "1.2"
 CUDA = "6"
 DataFrames = "1"
 GPUArraysCore = "0.2"
@@ -38,7 +38,7 @@ Metal = "1"
 NNlib = "0.9"
 Plots = "1"
 Printf = "1"
-Random = "1.11.0"
+Random = "1.11"
 Rimu = "0.18"
 SpecialFunctions = "2"
 Statistics = "1"

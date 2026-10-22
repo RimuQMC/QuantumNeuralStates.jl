@@ -24,7 +24,7 @@ and moved to `backend`; the evaluation runs as a kernel on that backend.
 # Keyword Arguments
 * `backend`: KernelAbstractions backend on which the parameters live and the kernels run,
     e.g. `KernelAbstractions.CPU()` (default), `MetalBackend()`, or `CUDABackend()`. Must 
-    match the backend of the arrays passed to [`(mf)`](@ref). Resolved in 
+    match the backend of the arrays passed to `(mf)`. Resolved in 
     [`NeuralAnsatz`](@ref) structure.
 
 # Notes
@@ -88,8 +88,6 @@ end
 Kernel that adds the mean-field log-amplitude of each walker to `result`. Launched with
 `ndrange = length(addrs)`, one thread per walker `b`, which evaluates
 `mf_func(onr(addrs[b]), params, T)` and adds it to `result[b]`.
-
-See [`(mf)`](@ref).
 """
 @kernel function _mf_addrs_kernel!(result, @Const(addrs), mf_func, params)
     b = @index(Global, Linear)                     # walker b
@@ -109,8 +107,6 @@ with `k > offsets[b] - offsets[b-1]` (unfilled slots) do nothing; the others add
 Unlike [`_prepare_input_stream_kernel!`](@ref), no binary search
 ([`_find_column`](@ref)) is needed, since the kernel is launched over `(k, b)` directly
 and writes into the final stream position.
-
-See [`(mf)`](@ref).
 """
 @kernel function _mf_offdiag_kernel!(result, @Const(addrs), @Const(offsets), mf_func, params)
     k, b  = @index(Global, NTuple)                 # slot k of walker b

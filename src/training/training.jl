@@ -7,7 +7,6 @@ Run training through a sequence of TrainingPhase's. Each phase starts when
 the previous one converges (or hits `max_epochs`).
 
 # Variables
-
 * `H`: hamiltonian defined in Rimu.
 * `ansatz`: ansatz that evaluates wave-function. See [`NeuralAnsatz`](@ref).
 * `addr`: Rimu stype of Fock address also used in `H` definition.
@@ -15,7 +14,6 @@ the previous one converges (or hits `max_epochs`).
         can be stuck as: `phases = [TrainingPhase(), TrainingPhase(), ...]`.
 
 # Keyword Arguments
-
 * `savefile`: name of file where parameters of [`NeuralAnsatz`](@ref) are saved.
         See also [`save_master`](@ref). (default `weights.txt`)
 * `loadfile`: name of file from which parameters are loaded to [`NeuralAnsatz`](@ref).
@@ -90,8 +88,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     ansatz.neuron_statistics = false # to plot it only every block
     ansatz.jacobian_statistics = false
 
-    var_track = RunningMean{Float32}()
-    s_track = RunningMean{Float32}()
+    var_track = RunningMean{Float32}() # for tracking of variance spikes
+    s_track = RunningMean{Float32}() # for traking of Jacobian scale spikes
 
     println(repeat("#", 100))
     @printf("  Training with: %d phase(s)", length(phases))
@@ -118,6 +116,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
             println(ansatz.truncation)
         end
 
+        # build phase's optimiser buffer
         opt_symbol, opt_buf, vmc_symbol = _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
 
         block = BlockStats()
@@ -169,9 +168,9 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 end
 
                 E_b, E_err_b, var_b = block_summary(block)
-                push!(E_hist,     E_b)
+                push!(E_hist, E_b)
                 push!(E_err_hist, E_err_b)
-                push!(var_hist,   var_b)
+                push!(var_hist, var_b)
                 block = BlockStats()
 
                 # --- η decrease schedule --------------------------------
@@ -180,12 +179,12 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                     η_dec_idx = η_dec_idx < length(phase.η_decrease) ? η_dec_idx + 1 : 0
                 end
 
-                diff_E   = length(E_hist)   > 1 ? abs(E_hist[end]   - E_hist[end-1])   : NaN
-                diff_var = length(var_hist)  > 1 ? abs(var_hist[end] - var_hist[end-1]) : NaN
+                diff_E = length(E_hist) > 1 ? abs(E_hist[end] - E_hist[end-1]) : NaN
+                diff_var = length(var_hist) > 1 ? abs(var_hist[end] - var_hist[end-1]) : NaN
 
                 @printf("%-6d %-18.10f %-12.2e %-12.2e %-11.2e %-11.2e %-9.4f %-10.2e\n",
                         vmc_buf.block_idx, E_b, E_err_b, var_b,
-                        isnan(diff_E)   ? 0.0 : diff_E,
+                        isnan(diff_E) ? 0.0 : diff_E,
                         isnan(diff_var) ? 0.0 : diff_var,
                         last_accept, eta_sum/phase.block_size)
                 eta_sum = 0f0
@@ -208,15 +207,16 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
             @printf("  Phase %d hit max_epochs (%d)\n", pidx, phase.max_epochs)
         end
 
-        append!(all_E,     E_hist)
+        append!(all_E, E_hist)
         append!(all_E_err, E_err_hist)
-        append!(all_var,   var_hist)
+        append!(all_var, var_hist)
     end # phase loop
     
     if save
         save_master(savefile, jac_buf.θ, addrs_n, ansatz)
     end
 
+    # final VMC energy estimate of trained NN 
     final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
     
     return all_E, all_E_err, all_var, addrs_n

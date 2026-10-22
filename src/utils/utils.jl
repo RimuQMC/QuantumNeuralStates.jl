@@ -7,8 +7,36 @@ log1plog1p(x)  = log1p(log1p(x))
 """
     SCALE_FUNCTIONS
 
-This dictionary holds binding with custom input scaling functions.
-Those functions can be defined here and added to the dictionary.
+Registry of the input scaling functions available for [`NeuralAnsatz`](@ref). Maps a
+name (`Symbol`) to the function that is applied to each occupation number before it
+enters the network,
+
+```math
+x_m = f(n_m) \\cdot \\mathrm{normalisation} ,
+```
+
+see [`_prepare_input_kernel!`](@ref) and [`_prepare_input_stream_kernel!`](@ref).
+
+# Available functions
+* `:identity`: raw occupation numbers.
+* `:sqrt`: `√n`.
+* `:log1p`: `log(1 + n)`.
+* `:sqrtlog1p`, `:log1plog1p`: composed variants that compress large occupations more
+    strongly.
+
+# Adding a new function
+Define a scalar function and register it under its own name:
+
+    myscale(x) = ...
+    SCALE_FUNCTIONS[:myscale] = myscale      # or add it to the definition below
+
+# Requirements
+* The function is called inside GPU kernels on `Float32` values: it must be scalar,
+    type-stable (`Float32 → Float32`) and device-compatible (no allocations, no calls
+    that only exist on the CPU).
+* The key must equal the function's name, `Symbol(nameof(f))`. [`save_master`](@ref)
+    stores the function by its name, and [`load_master`](@ref) looks it up here, so a
+    mismatch prevents a saved model from being loaded.
 """
 const SCALE_FUNCTIONS = Dict(
     :identity   => identity,
@@ -100,15 +128,43 @@ end
 
 """
     final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
-                            n_iter = 100, n_skip = 5, burnin = 50)
+                            n_iter = 100, n_skip = 5, burnin = 50) -> res
 
-This function is run at the end of the [`run_training_loop`](@ref) to see what is variational
-energy of learned [`NeuralAnsatz`](@ref). It is using `BlockingAnalysis` from Rimu and
-Gutzwiller.
+Estimate the variational energy of the trained [`NeuralAnsatz`](@ref) with an error bar.
+Run at the end of [`run_training_loop`](@ref).
 
-It runs MC sampler from last addresses `addrs` visited in training loop and collects local
-energies to calculate the cariational energy. It is using same parameters as the training loop.
-The number of samples collected for this analysis is `batch*batch_iter`.
+Starting from the last walker addresses `addrs` of the training loop, the sampler is first
+re-equilibrated for `burnin` steps. It then records `n_iter` measurements, separated by
+`n_skip` sampler steps each. Every measurement is the weighted batch mean
+
+```math
+E_t = \\sum_{b=1}^{B} w_b\\, E_{\\mathrm{loc}}(n_b) ,
+```
+
+and the time series ``E_t`` is analysed with `Rimu.blocking_analysis`, which accounts for
+the autocorrelation between measurements. In total `n_iter * batch` local energies are used.
+
+# Arguments
+* `vmc_sampler`: sampler type, `:metropolis` or `:ctmc`, see [`vmc_sample!`](@ref).
+* `vmc_buf`: VMC buffers, see [`VMCBuffer`](@ref).
+* `jac_buf`: Jacobian buffer, see [`JacobianBuffer`](@ref).
+* `H`: Rimu Hamiltonian.
+* `addrs`: walker addresses at the end of training.
+* `ansatz`: the trained [`NeuralAnsatz`](@ref).
+
+# Keyword Arguments
+* `n_iter`: number of measurements (default `100`).
+* `n_skip`: sampler steps per measurement; `n_skip - 1` steps without measurement are made
+    in between to reduce correlations (default `5`).
+* `burnin`: re-equilibration steps before the first measurement (default `50`).
+
+# Returns
+* `res`: result of `Rimu.blocking_analysis`, with the mean energy and its error estimate.
+
+# Notes
+* The error bar from the blocking analysis is the reliable one. The `E_err` printed during
+    training is computed per block without this correlation analysis and can be too small.
+* The mean-field, if present in `ansatz`, is included automatically through the samplers.
 """
 function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
                                  n_iter = 100, n_skip = 5, burnin = 50)

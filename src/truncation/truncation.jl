@@ -18,7 +18,6 @@ truncation.
         (how I determine nearest closest neighbours)
 
 # Note
-
 * `type options`: :center
 * `metric options`: :l1, :l2, :linf 
 """
@@ -33,7 +32,7 @@ struct TruncationBuffer{D<:Tuple, MD<:AbstractVector{Bool}}
     mask_host::Vector{Bool}   # CPU copy: used by host-side code
 end
 function TruncationBuffer(H, k::Int, backend; type::Symbol=:center, metric::Symbol=:l1)
-    dims  = grid_dims(H)
+    dims = grid_dims(H)
     
     if type === :center
         order = center_order(dims; metric=metric)
@@ -41,7 +40,7 @@ function TruncationBuffer(H, k::Int, backend; type::Symbol=:center, metric::Symb
         error("Invalid type of truncation mask: $type")
     end
 
-    keep  = sort(order[1:k])
+    keep = sort(order[1:k])
     mask_host = zeros(Bool, prod(dims))
     mask_host[keep] .= true
 
@@ -89,8 +88,8 @@ function build_truncation(hamiltonian, truncation, backend)
     elseif truncation isa Tuple
         length(truncation) in 1:3 ||
             error("Truncation tuple must have 1–3 elements (k, type, metric), got $(length(truncation))")
-        k      = truncation[1]
-        type   = length(truncation) >= 2 ? truncation[2] : :center
+        k = truncation[1]
+        type = length(truncation) >= 2 ? truncation[2] : :center
         metric = length(truncation) >= 3 ? truncation[3] : :l1
         return TruncationBuffer(hamiltonian, k, backend; type=type, metric=metric)
     else

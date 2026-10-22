@@ -17,7 +17,7 @@ BlockStats() = BlockStats(Float32[], Float32[])
 Record one epoch's energy and variance into `bs` [`BlockStats`](@ref).
 """
 function push_epoch!(bs::BlockStats, E, var)
-    push!(bs.energies,  E)
+    push!(bs.energies, E)
     push!(bs.variances, var)
 end
 
@@ -109,6 +109,7 @@ function check_stop(sb::StopBuffer, E_hist, var_hist, accept, patience)
         push!(results, accept < sb.accept_thr)
     end
     isempty(results) && return false
+
     return sb.require_all ? Base.all(results) : Base.any(results)
 end
 
@@ -139,11 +140,11 @@ with different parameters.
 * `ρ`: maximal relative weight change `η‖Δθ‖/‖θ‖` per step of [`minSR`](@ref)
         (default `0.05f0`). During a drop of the Jacobian scale `s` it is tightened to
         `0.1 ρ`, see [`minSRBuffer`](@ref).
-* `skip`: define how many VMC steps should be skip before parameters update is made.
+* `skip`: define how many VMC steps should be skip/burned before parameters update is made.
         Thermalisation of VMC sampler (default `(1, 100)`). Multiple options can be 
-        stuck in Tuple of form `(epoch, skip)` - which means from epoch number 
-        `epoch` apply skip value `skip`. Example: `[(1, 1000), (100, 500), 
-        (1000, 100)]`.
+        stuck in Tuple of form `(epoch, burnin)` - which means from epoch number 
+        `epoch` apply skip value `burnin`. Example: `[(1, 1000), (100, 500), 
+        (1000, 100)]`. `skip` must be sorted by `epoch` value.
 * `η_decrease`: allows to decrease `η` learning rate and can be stuck in similar
         way as `skip` variable. `(var_thr, factor)` when variance threashold is 
         reached than `factor` is applied to `η` as `η_new = η*factor`. Example:
@@ -165,6 +166,9 @@ with different parameters.
 
 # Notes
 * `λ`, `d_loose`, `d_tight`, and `ρ` are only used by the [`minSR`](@ref) optimisers.
+* Usually there is no need to manually setup: `λ`, `d_loose`, `d_tight`, `ρ`, as the 
+    default values works quite well. Only the `d_loose` can be tighten at the last stage 
+    of training for very carfull optimization (`d_loose = 1f-2 = d_tight`).
 """
 Base.@kwdef struct TrainingPhase
     mode::Union{Symbol, Tuple} = :energy
@@ -186,7 +190,17 @@ Base.@kwdef struct TrainingPhase
 end
 Base.show(io::IO, ::MIME"text/plain", ::TrainingPhase) = print(io, "TrainingPhase")
 
-"""Return burnin for the current epoch using the skip schedule."""
+"""
+    _get_burnin(skip, epoch) -> Int
+
+Return the burn-in length for `epoch` from the `skip` schedule of a
+[`TrainingPhase`](@ref).
+
+Each `(start_epoch, burnin)` entry applies from `start_epoch` onward, until a
+later entry takes over. Before the first `start_epoch`, the first entry's
+burn-in is used. `skip` must be sorted by `start_epoch`; otherwise a wrong
+burn-in may be returned.
+"""
 function _get_burnin(skip::Vector{Tuple{Int,Int}}, epoch::Int)
     burnin = skip[1][2]            
     for (ep, b) in skip
@@ -197,7 +211,20 @@ function _get_burnin(skip::Vector{Tuple{Int,Int}}, epoch::Int)
     return burnin
 end
 
-"""Build the right optimiser buffer for a phase."""
+"""
+    _build_opt_buffer(phase, n_params, ansatz, var_track, s_track) -> (opt, buffer, vmc)
+
+Create the optimiser buffer for a training `phase` (using `optimiser` field in `phase`).
+
+Supported optimisers:
+
+* `:minSR`: minimum step Stochastic Reconfiguration
+* `:minSR_momentum`: minSR with momentum (`β = 0.9`)
+* `:descent`: plain gradient descent
+* `:adam`: Adam (`β1 = 0.9`, `β2 = 0.999`, `ε = 1e-3`)
+
+Returns the optimiser symbol to dispatch on, the buffer, and the phase's VMC sampler symbol. 
+"""
 function _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
     opt = phase.optimiser
     vmc = phase.vmc_sampler
@@ -220,7 +247,17 @@ function _build_opt_buffer(phase, n_params, ansatz, var_track, s_track)
     end
 end
 
-"""Dispatch one epoch to the correct update function."""
+"""
+    _run_epoch(opt, vmc, opt_buf, jac_buf, vmc_buf, H, ansatz, addrs_n;
+               burnin, mode, λ, η)
+
+Run one training epoch with the update rule `opt` (`:minSR`, `:descent` or
+`:adam`), as returned by [`_build_opt_buffer`](@ref).
+
+`opt_buf` must be the buffer built for `opt`. `vmc`, `mode`, `λ` and `η` come
+from the current [`TrainingPhase`](@ref), and `burnin` from
+[`_get_burnin`](@ref).
+"""
 function _run_epoch(opt::Symbol, vmc::Symbol, opt_buf, jac_buf, vmc_buf, H, ansatz, addrs_n;
                     burnin, mode, λ, η)
     kw = (; vmc, burnin, mode, λ, η)

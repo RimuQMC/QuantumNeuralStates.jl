@@ -238,12 +238,12 @@ w_b = \\frac{|\\psi(n_b)|}{\\sum_m |\\text{exp(log_distro)}(m_b)|}
 ```
 
 where the sum runs over the valid off-diagonals `m` of parent `b`, and `log_distro` holds
-`log_psi_m`, the same as used in [`state_proposal!`](@ref).
+`log_psi_m`, the same as used in [`ctmc_state_proposal!`](@ref).
 
 # Variables
 * `weights`: (B,) device vector, receives the normalised weights (`Σ_b w_b = 1`).
 * `distro`: log amplitudes of all valid off-diagonals, packed in stream order
-    (length `last(offsets)`), same as in [`state_proposal!`](@ref).
+    (length `last(offsets)`), same as in [`ctmc_state_proposal!`](@ref).
 * `offsets`: device vector of length `B`, cumulative number of valid off-diagonals per
     parent. Parent `b` owns stream positions `_column_start(offsets, b) + 1 : offsets[b]`.
 * `log_psi`: (B,) log amplitudes of the current samples, see [`log_psi!`](@ref).
@@ -306,7 +306,8 @@ so no connection is ever lost. The grown size is kept for later calls.
 * `offsets`: (B,) Int32 device vector, receives `cumsum(num_offdiagonals)`.
 * `hamiltonian`: Rimu Hamiltonian; has to be Float32/isbits compatible.
 * `addrs_n`: (B,) vector of the current addresses.
-* `mask`: truncation mask on the device, or `nothing` for no truncation.
+* `mask`: truncation mask on the device, or `nothing` for no truncation. See also 
+    [`TruncationBuffer`](@ref).
 """
 function collect_offdiagonals!(addrs_buf::GPUGrowRowBuffer, hmn_buf::GPUGrowRowBuffer,
                                diag, offsets, hamiltonian, addrs_n, mask)

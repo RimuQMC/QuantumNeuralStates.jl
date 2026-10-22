@@ -25,7 +25,7 @@ and importance sampling.
 * `multiforward_buffer`: can be set with `Int` number. This number would determine
                 usually bigger batch forward passes. See [`MultiForwardBuffer`](@ref).
 * `mean_field`: if set `true` the mean-field would add to neural network wave-funciton
-                evaluation. Needs to be manually set, see [`MeanField`](@ref).
+                evaluation. Needs to be manually defined, see [`MeanField`](@ref).
 * `truncation`: can be used for input space truncation. See [`TruncationBuffer`](@ref).
 * `neuron_statistics`: Can be activated with `true` (statistics would be print out to
                 terminal), or (NOT WORKING - `filename::String` to be saved in external file). See
@@ -39,9 +39,10 @@ and importance sampling.
 julia> M = 10
 julia> N = 10
 julia> batch = 1024
-julia> model = build_model("FCNN", [M, 100, 100, 100, 1], tanh_fast; batch=batch)
-julia> addr = near_uniform(BoseFS{N,M})
-julia> H = HubbardReal1D(addr; u=0.1)
+julia> addr = BoseFS{missing, M}()
+julia> H = FroehlichPolaron{Float32}(addr; D=1, mode_cutoff=N)
+julia> input = OccupationEncoding((M,), H)
+julia> model = build_model("FCNN", input, [M, 100, 100, 100, 1], tanh_fast; batch=batch)
 julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 ```
 
@@ -53,7 +54,6 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 * `logψ_centering`: this is max value centering over batched `model` output connected with 
                 wave-function amplitude - log|ψ| (fighting the gauge invariant for 
                 multiplication of wave-function with arbitrary number coefficient)
-* `x_cpu_buffer`: pre-allocated `Float32` buffer for batched network input.
 * `addrs_buffer`: dynamically filled buffer of addresses, used during
                 Rimu FCIQMC importance sampling.
 * `result_buffer`: dynamically filled buffer of network outputs, paired
@@ -75,7 +75,7 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
                 invariant regardless the normalisation.
 * `multi_forward_buffer`: if active it holds additional [`MultiForwardBuffer`](@ref).
                 This allows to do forward pass with arbitrary batch size.
-* `meanfield`: allows using mean-filed estimate with neural network. See
+* `meanfield`: allows using mean-filed estimate with neural network output. See
                 [`MeanField`](@ref).
 * `truncation`: allows input truncation for graduate training in smaller 
                 dimensions. See [`TruncationBuffer`](@ref).
@@ -145,14 +145,15 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     H = typeof(hamiltonian)
     M = typeof(model)
 
-    addrs_buffer  = A[]
+    addrs_buffer = A[]
     result_buffer = Float64[]
-    result_dict   = Dict{A, T}()
+    result_dict = Dict{A, T}()
     XA = typeof(addrs_buffer)
     XR = typeof(result_buffer)
-    D  = typeof(result_dict)
+    D = typeof(result_dict)
     first_iter = true
 
+    # input scale / input normalisation
     F=typeof(input_scale_func)
     normalisation = if max_norm === nothing
         1.0f0
@@ -163,6 +164,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     end
     MN=typeof(max_norm)
 
+    # multi forward buffer
     multi_forward_buffer = if multiforward_buffer === nothing
         nothing
     else
@@ -170,6 +172,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     end
     MFB=typeof(multi_forward_buffer)
 
+    # mean-field
     meanfield = if mean_field === false
         nothing
     else
@@ -177,6 +180,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     end
     MF=typeof(meanfield)
 
+    # truncation
     trun = build_truncation(hamiltonian, truncation, backend)
     TR=typeof(trun)
 
@@ -254,7 +258,13 @@ function prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x)
     return x
 end
 
-# vector of addresses: column b gets addrs[b]
+"""
+    _prepare_input_kernel!(backend)(buf, addrs, ch, f, s)
+
+Kernel for [`prepare_input!`](@ref) with a vector of addresses. Per-element thread `b`
+writes `f(onr(addrs[b])) * s` into channel `ch` of column `b` of `buf`,
+which has shape `(M, C, B)`.
+"""
 @kernel function _prepare_input_kernel!(buf, @Const(addrs), ch::Int, f, s)
     b = @index(Global, Linear)                 # this thread's sample
     o = onr(addrs[b])                          # occupations of sample b (SVector)
@@ -264,6 +274,17 @@ end
 end
 
 # single address: every column gets the same occupations
+"""
+    _prepare_input_single_kernel!(backend)(buf, addr, ch, f, s)
+
+Kernel for [`prepare_input!`](@ref) with a single address. Every thread `b`
+writes the same `f(onr(addr)) * s` into channel `ch` of column `b` of `buf`,
+which has shape `(M, C, B)`.
+
+# Note
+* This function is usually not used. Only for testing purpouses allowing one
+    address entry.
+"""
 @kernel function _prepare_input_single_kernel!(buf, addr, ch::Int, f, s)
     b = @index(Global, Linear)                 # this thread's column
     o = onr(addr)
@@ -276,21 +297,26 @@ end
     compute_logψ(ansatz, addr) -> logψ
     compute_logψ(ansatz, addr, multi_forward_buffer) -> logψ
 
-Calculates log of the wave-function value prediction of the Neural Network 
-from the `addr` input configuration.
+Evaluate the Neural Network for the configuration(s) `addr`: the
+occupations are written into the input buffer with [`prepare_input!`](@ref),
+then a forward pass through the network gives its output. 
+
+Final wave-function representation can be done using [`log_psi!`](@ref) for log 
+represantation or using [`psi!`](@ref) for full wave-function representation.
+See also [`AnsatzType`](@ref).
 
 If dispatched with `multi_forward_buffer` it allows for computation in 
-arbitrary batch size. See [`MultiForwardBuffer`](@ref).
+arbitrary batch sizes. See [`MultiForwardBuffer`](@ref).
 """
 function compute_logψ(na::NeuralAnsatz, addr)
     x = prepare_input!(na, addr, na.model.x)
-    logψ = na.model(x)
-    return logψ
+    out = na.model(x)
+    return out
 end
 function compute_logψ(na::NeuralAnsatz, addr, multi_forward_buffer)
     x = prepare_input!(na, addr, multi_forward_buffer.x)
-    logψ = na.model(x, multi_forward_buffer)
-    return logψ
+    out = na.model(x, multi_forward_buffer)
+    return out
 end
 
 """
@@ -335,7 +361,7 @@ of stream position `g`. The valid part is `view(vals, :, 1:total)` with
 `b` and `k` are only needed to read the address `addrs[k, b]`; the output position is
 `g` itself.
 
-## Note
+# Note
 The forward size `fwd` is the number of columns of the input buffer: the
 [`MultiForwardBuffer`](@ref) `buffer_size` if present, otherwise the model `batch` size.
 """
@@ -352,7 +378,7 @@ function multi_compute_logψ!(ansatz::NeuralAnsatz, addrs_buf::GPUGrowRowBuffer,
     fwd = size(x, ndims(x))                               # columns of one forward pass
 
     ch, f, s = occupation_channel(model.enc), ansatz.input_scale_func, ansatz.normalisation
-    backend  = KernelAbstractions.get_backend(vals)
+    backend = KernelAbstractions.get_backend(vals)
 
     for offset_current in 0:fwd:(total - 1)
         n = min(fwd, total - offset_current)                # valid off-diagonals in this pass
