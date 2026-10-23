@@ -86,25 +86,29 @@ julia> ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
                 [`jacobian_statistics`](@ref). 
 
 """
-mutable struct NeuralAnsatz{AT<:AnsatzType,A,T<:Real,H,M,XA<:AbstractArray{A},XR<:AbstractArray,
-                            D,F,MN<:Union{Nothing,Int},MFB<:Union{Nothing,MultiForwardBuffer},
+mutable struct NeuralAnsatz{T<:Real,TH<:Real,A,H,AT<:AnsatzType,M,XA<:AbstractArray{A},XR<:AbstractArray,
+                            D,GR<:GPUGrowRowBuffer,GC<:GPUGrowColumnBuffer,AI<:AbstractArray{Int32}, 
+                            F,MN<:Union{Nothing,Int},MFB<:Union{Nothing,MultiForwardBuffer},
                             MF<:Union{Nothing,MeanField},TR<:Union{Nothing,TruncationBuffer},
-                            NS<:Union{Bool,String}, JS<:Union{Bool,String}} <: Gutzwiller.AbstractAnsatz{A,T,0}
+                            NS<:Union{Bool,String},JS<:Union{Bool,String}} <: Gutzwiller.AbstractAnsatz{A,TH,0}
     ansatz_type::AT
     hamiltonian::H
     model::M
-    logψ_centering::Float32 # centers model output corresponding to ψ amplitude
+    logψ_centering::T   # centers model output corresponding to ψ amplitude
 
     # Rimu FCIQMC helper buffers dynamically filled 
     addrs_buffer::XA
     result_buffer::XR
     result_dict::D
     first_iter::Bool
+    addrs_device::GR       # addrs collection (n,1)
+    vals_device::GC        # (out_dim, n) network outputs 
+    off_device::AI         # (1,) tmp needed for multi_compute_logψ!
 
     # helper functions for Input preparation
     input_scale_func::F
     max_norm::MN
-    normalisation::Float32
+    normalisation::T
 
     # helper buffer structure for NN forward runs where length(input) > batch
     multi_forward_buffer::MFB
@@ -132,33 +136,43 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     error("NeuralAnsatz needs an encoding that maps Fock states to network inputs " *
           "(OccupationEncoding or MomentumEncoding); NoEncoding is for plain NN use")
 
-    backend = KernelAbstractions.get_backend(model.x)
+    model_z = last(model.layers).z
+    out_dim = size(model_z, 1)
+    T = eltype(model_z)
+
+    backend = KernelAbstractions.get_backend(model_z)
 
     addr = starting_address(hamiltonian)
-    dim = size(model.x, 1)
 
     nn_output = model(model.x)
     logψ_centering = maximum(nn_output)
 
     A = typeof(addr)
-    T = Float64
+    TH = eltype(hamiltonian)
     H = typeof(hamiltonian)
     M = typeof(model)
 
+    # Rimu Important Sampling stuff
     addrs_buffer = A[]
-    result_buffer = Float64[]
-    result_dict = Dict{A, T}()
+    result_buffer = TH[]
+    result_dict = Dict{A, TH}()
+    addrs_device = GPUGrowRowBuffer(backend, A, 1, (1,))
+    vals_device = GPUGrowColumnBuffer(backend, T, (out_dim,), 1)
+    off_device = KernelAbstractions.zeros(backend, Int32, 1)
+    first_iter = true
     XA = typeof(addrs_buffer)
     XR = typeof(result_buffer)
     D = typeof(result_dict)
-    first_iter = true
+    GR = typeof(addrs_device)
+    GC = typeof(vals_device)
+    AI = typeof(off_device)
 
     # input scale / input normalisation
     F=typeof(input_scale_func)
     normalisation = if max_norm === nothing
-        1.0f0
+        T(1.0)
     elseif max_norm > 0
-        Float32(inv(input_scale_func(Float32(max_norm))))
+        T(inv(input_scale_func(T(max_norm))))
     else
         error("Normalisation must be positive! got $max_norm")
     end
@@ -173,11 +187,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     MFB=typeof(multi_forward_buffer)
 
     # mean-field
-    meanfield = if mean_field === false
-        nothing
-    else
-        MeanField(hamiltonian; backend=backend)
-    end
+    meanfield = mean_field ? MeanField(hamiltonian; backend=backend, eltype=T) : nothing
     MF=typeof(meanfield)
 
     # truncation
@@ -186,9 +196,10 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
 
     NS=typeof(neuron_statistics); JS=typeof(jacobian_statistics)
 
-    return NeuralAnsatz{AT,A,T,H,M,XA,XR,D,F,MN,MFB,MF,TR,NS,JS}(
+    return NeuralAnsatz{T,TH,A,H,AT,M,XA,XR,D,GR,GC,AI,F,MN,MFB,MF,TR,NS,JS}(
                 ansatz_type, hamiltonian, model, logψ_centering,
                 addrs_buffer, result_buffer, result_dict, first_iter, 
+                addrs_device, vals_device, off_device,
                 input_scale_func, max_norm, normalisation, multi_forward_buffer, 
                 meanfield, trun, neuron_statistics, jacobian_statistics)
 end

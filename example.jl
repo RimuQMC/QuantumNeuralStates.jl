@@ -14,6 +14,37 @@ Random.seed!(1234)
 # but this generally picks the GPU based on what package is loaded
 device = select_device()
 
+# N = 10 # number of particles
+# M = 7*7 # number of sites 10*10
+# addr = BoseFS{missing, M}()
+# H = FroehlichPolaron(addr; D=2, alpha=2, l=5, mode_cutoff=N)
+# # -------------------------------------------------------------------
+# # NN Model
+# # -------------------------------------------------------------------
+#
+# #model FCNN = Chain(Dense(15, 64, tanh), Dense(64, 32, tanh), Dense(32, 1))
+# batch  = 1024
+# #model  = build_model("FCNN", [M, 600, 600, 600, 600, 600, 600, 1], tanh_fast; batch=batch, device=device, Layer_Norm=true);
+# act = gelu_fast
+# pad = Zeros()
+# input = MomentumEncoding((7,7), H; device=device)
+# model  = Chain(input,
+#                #Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
+#                #Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+#                #Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+#                #Pool(:sum; device=device),
+#                #Dense(32=>32, tanh_fast; batch=batch, device=device, layer_norm=true),
+#                #Dense(32=>1, identity; batch=batch, device=device);
+#                Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
+#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+#                Conv((3,3), 32=>1, act; batch=batch, device=device, pad=pad),
+#                Pool(:sum; device=device),
+#                Dense(1=>1, identity; batch=batch, device=device);
+#                batch=batch, device=device)
+#
+# ansatz  = NeuralAnsatz(LogPsi(), H, model, batch; input_scale_func=sqrt)
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
@@ -41,14 +72,14 @@ model = Chain(input,
               # Dense(500=>1, identity; batch=batch, device=device); 
               Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
               Pool(:sum; device=device),
               Dense(1=>1, identity; batch=batch, device=device);
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
-                      input_scale_func=sqrt, mean_field=true)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+                      input_scale_func=sqrt, mean_field=false)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
@@ -98,10 +129,10 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/test_log.txt"
+SAVEFILE = "./weights/example_test5.txt"
 SAVE_WEIGHTS = false
-LOADFILE = "./weights/test_log.txt"
-LOAD_WEIGHTS = false
+LOADFILE = "./weights/example_test4.txt"
+LOAD_WEIGHTS = true
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false
 

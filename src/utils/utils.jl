@@ -59,10 +59,10 @@ Updates all parameters in `chain` given a flat parameter update vector `θ_new` 
 """
 function update!(ansatz, jac::JacobianBuffer, θ_new::AbstractVector)
     chain = ansatz.model
-    amplitude_output = view(last(chain.layers).z, 1, :)
-    ansatz.logψ_centering = maximum(amplitude_output)
 
-    map((layer, r) -> _set_params!(layer, θ_new, r), chain.layers, jac.ranges)
+    foreach((layer, r) -> _set_params!(layer, θ_new, r), chain.layers, jac.ranges)
+    set_centering!(ansatz)
+
     return nothing
 end
 
@@ -280,4 +280,10 @@ function is_outlier!(r::RunningMean{T}, x::T; up::Bool = true,
     ρ = dev < zero(T) ? T(0.3) : T(0.05)               # fast to the safe side, slow otherwise
     r.rmean = (1 - ρ) * r.rmean + ρ * lx
     return false
+end
+
+function set_centering!(ansatz)
+    out = ansatz.model(ansatz.model.x)
+    ansatz.logψ_centering = maximum(out)
+    return ansatz.logψ_centering
 end

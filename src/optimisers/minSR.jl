@@ -194,7 +194,7 @@ function compute_minSR_cg!(E_mean, variance, jacobian_buf, vmc_buf, minSR_buf,
     g ./= bn                            # b' = b/‖b‖
 
     # --- solve (K' + λI) x' = b'   (λ relative to mean eigenvalue) --------------
-    ok, iters, relres = cg_solve!(weights, J, λ, g, p_cg, Ap, Δθ)
+    ok, iters, relres = cg_solve!(weights, J, λ, g, p_cg, Ap, Δθ)   # result saved in weights, Δθ is tmp
     if !ok
         @warn "compute_minSR_cg!: CG breakdown (iters = $iters, relres = $relres) — skipping update"
         return Δθ, sq, false

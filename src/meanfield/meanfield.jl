@@ -43,8 +43,8 @@ struct MeanField{F,P}
     params::P
 end
 
-function MeanField(H; backend = KernelAbstractions.CPU())
-    func, params = _choose_meanfield_function(H; backend)
+function MeanField(H; backend = KernelAbstractions.CPU(), eltype = Float32)
+    func, params = _choose_meanfield_function(H; backend, eltype)
     return MeanField{typeof(func), typeof(params)}(func, params)
 end
 
@@ -145,13 +145,13 @@ _choose_meanfield_function(H; backend = KernelAbstractions.CPU()) =
 
 function _choose_meanfield_function(H::Rimu.FroehlichPolaron{T};
                                     backend = KernelAbstractions.CPU(),
-                                    n_table::Int = 256) where T
+                                    eltype = Float32, n_table::Int = 256) where T
+    S = eltype
     eta, f = solve_self_consistent_eta(H)
 
-    small_val = T(-35)
-    log_f = T[iszero(fi) ? small_val : log(abs(fi)) for fi in f]    # (M,) fixed
-    lgf = T[loggamma(Float64(n) + 1) for n in 0:n_table-1]          # look-up table of log(n!)   
-    const_term = T(-0.5) * sum(f .^ 2)                              # scalar, fixed
+    log_f = S[iszero(fi) ? S(-35) : S(log(abs(fi))) for fi in f]    # (M,) fixed
+    lgf = S[loggamma(T(n) + 1) for n in 0:n_table-1]                # look-up table of log(n!)   
+    const_term = S(-0.5 * sum(f .^ 2))                              # scalar, fixed
 
     params = (_to_backend(backend, log_f), _to_backend(backend, lgf), const_term)
     return _mf_func_froehlich, params
