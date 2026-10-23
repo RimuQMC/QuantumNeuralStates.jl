@@ -97,7 +97,7 @@ function ln_forward!(ln::LayerNorm{T}, a::AbstractMatrix{T}) where T
     H = size(a, 1)
     # ones_H (1,H) * a (H,B) → μ (1,B) : sum over features = left-mul by row-of-ones
     mul!(ln.μ, ln.ones_H, a)
-    ln.μ   .*= T(1)/T(H)
+    ln.μ .*= T(1)/T(H)
     ln.Hbuf .= (a .- ln.μ) .^ 2
     mul!(ln.σ, ln.ones_H, ln.Hbuf)
 
@@ -120,7 +120,7 @@ function ln_forward!(ln::LayerNorm{T}, a::AbstractMatrix{T}, ln_multi::LayerNorm
     H = size(a, 1)
 
     mul!(ln_multi.μ, ln_multi.ones_H, a)
-    ln_multi.μ   .*= T(1)/T(H)
+    ln_multi.μ .*= T(1)/T(H)
     ln_multi.Hbuf .= (a .- ln_multi.μ) .^ 2
     mul!(ln_multi.σ, ln_multi.ones_H, ln_multi.Hbuf)
 
@@ -148,20 +148,20 @@ Full chain through μ(a) and σ(a):
   s₂  = mean(δγ⊙x̂, over features)    corrects ∂σ/∂aⱼ = x̂ⱼ/H
 """
 function ln_backward!(ln::LayerNorm{T}, δ::AbstractMatrix{T}) where T
-    H    = size(δ, 1)
+    H = size(δ, 1)
     invH = T(1)/T(H)
 
     δγx̂ = ln.Hbuf    # (out,batch)
-    s₁  = ln.sbuf    # (1,  batch)   feature-mean of δγ
-    s₂  = ln.sbuf2   # (1,  batch)   feature-mean of δγ⊙x̂
+    s₁ = ln.sbuf    # (1,  batch)   feature-mean of δγ
+    s₂ = ln.sbuf2   # (1,  batch)   feature-mean of δγ⊙x̂
 
     # --- s₁ = mean(δγ), s₂ = mean(δγ⊙x̂) -------------------------------
     δ .= δ .* ln.γ
     mul!(s₁, ln.ones_H, δ)
-    s₁  .*= invH
+    s₁ .*= invH
     δγx̂ .= δ .* ln.x̂
     mul!(s₂, ln.ones_H, δγx̂)
-    s₂  .*= invH
+    s₂ .*= invH
 
     # --- ∂a = (δγ − s₁ − x̂·s₂) / σ ------------------------------------
     δ .= (δ .- s₁ .- ln.x̂ .* s₂) ./ ln.σ # broadcast (1,batch) → (out,batch)

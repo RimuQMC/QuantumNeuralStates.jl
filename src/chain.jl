@@ -49,7 +49,9 @@ model. This design is inspired by `Flux.jl` notation.
 
 # Example
 ```julia
-enc   = MomentumEncoding((4,4), H; device = device)
+addr = BoseFS{missing, 16}()
+H = FroehlichPolaron{Float32}(addr; D=2)
+enc = MomentumEncoding((4,4), H; device = device)
 model = Chain(enc,
               Conv((3,3), nchannels(enc)=>16, relu; batch=batch, device=device, pad=Zeros()),
               Pool(:mean; device=device),
@@ -78,12 +80,12 @@ mutable struct Chain{L<:Tuple,X<:AbstractArray,XE<:AbstractArray,U<:AbstractArra
     enc::E
 end
 function Chain(enc::InputEncoding, layers...; device::Function = identity, batch::Int = 1)
-    l  = first(layers)
-    x  = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
+    l = first(layers)
+    x = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
     xe = reshape(x, nsites(enc), nchannels(enc), batch)       # same memory, [m, c, b]
     _check_device(enc, x)
 
-    z_out  = _forward_layers(layers, x)       # forward pass for all layers initialisation
+    z_out = _forward_layers(layers, x)       # forward pass for all layers initialisation
     z_last = similar(z_out)
 
     L, X, XE, U, F, E = typeof(layers), typeof(x), typeof(xe), typeof(z_last),
@@ -131,13 +133,10 @@ batch size `buffer_size` and the same input encoding as `model`.
 
 # Example
 Recommended way to choose `buffer_size`:
-julia> addr = OccupationNumberFS{4}()
+julia> addr = BoseFS{missing, 4}()
 julia> H = FroehlichPolaron(addr)
-julia> col = H*addr
-julia> num_offdiagonals(col)
+julia> num_offdiagonals(H)
 8
-A good value is `num_offdiagonals(col) + 10%`, so that all off-diagonals need
-only one forward pass.
 """
 mutable struct MultiForwardBuffer{L,A,X<:AbstractArray,XE<:AbstractArray,
                                   CX<:AbstractArray,CZ<:AbstractArray}
@@ -163,9 +162,9 @@ function MultiForwardBuffer(model, addr, buffer_size)
         ) for l in model.layers
     )
 
-    enc   = model.enc
-    x     = fill!(similar(model.x, size(model.x)[1:end-1]..., buffer_size), 0f0)
-    xe    = reshape(x, nsites(enc), nchannels(enc), buffer_size)
+    enc = model.enc
+    x = fill!(similar(model.x, size(model.x)[1:end-1]..., buffer_size), 0f0)
+    xe = reshape(x, nsites(enc), nchannels(enc), buffer_size)
     x_cpu = zeros(Float32, size(model.x)[1:end-1]..., buffer_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), buffer_size)
 
@@ -188,16 +187,21 @@ If dispatched with [`MultiForwardBuffer`](@ref), it loads into that buffer
 instead, for bigger batched passes.
 """
 function prepare_chain_input!(chain::Chain, x::AbstractArray)
-    size(x) == size(chain.x) ||
-        error("input has size $(size(x)), model expects $(size(chain.x))")
-    copyto!(chain.x, x)
+    if x !== chain.x                                    # external input: copy it in
+        size(x) == size(chain.x) ||
+            error("input has size $(size(x)), model expects $(size(chain.x))")
+        copyto!(chain.x, x)
+    end
     encode!(chain.xe, chain.enc)
     return chain.x
 end
+
 function prepare_chain_input!(chain::Chain, x::AbstractArray, multi_forward_buffer)
-    size(x) == size(multi_forward_buffer.x) ||
-        error("input has size $(size(x)), buffer expects $(size(multi_forward_buffer.x))")
-    copyto!(multi_forward_buffer.x, x)
+    if x !== multi_forward_buffer.x                     # external input: copy it in
+        size(x) == size(multi_forward_buffer.x) ||
+            error("input has size $(size(x)), buffer expects $(size(multi_forward_buffer.x))")
+        copyto!(multi_forward_buffer.x, x)
+    end
     encode!(multi_forward_buffer.xe, chain.enc)
     return multi_forward_buffer.x
 end

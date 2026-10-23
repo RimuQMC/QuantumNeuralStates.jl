@@ -33,7 +33,7 @@ Allocation-free at runtime — all intermediate results are stored in pre-alloca
 ```julia
 layer = Dense(64=>32, tanh)
 layer_gpu = Dense(64=>32, relu; batch=16, device=cu)
-layer_ln  = Dense(64=>32, gelu; layer_norm=true)
+layer_ln = Dense(64=>32, gelu; layer_norm=true)
 ```
 """
 struct Dense{T,M<:AbstractMatrix{T},V<:AbstractVector{T},F<:Union{Function,Tuple},
@@ -81,10 +81,10 @@ function Dense(channels::Pair{Int,Int}, acts::NTuple{N,Function};
 
     Layer_Norm = layer_norm === false ? nothing : LayerNorm(out, batch, device)
 
-    act_ds  = map(_lookup_deriv, acts) # tuple-map for activations and its derivatives
-    ranges  = ntuple(i -> i:i, N)
+    act_ds = map(_lookup_deriv, acts) # tuple-map for activations and its derivatives
+    ranges = ntuple(i -> i:i, N)
 
-    M, V, F, G, B, R, LN = typeof(W), typeof(b), typeof(acts), typeof(act_ds), typeof(z), typeof(ranges), typeof(Layer_Norm)
+    M,V,F,G,B,R,LN = typeof(W), typeof(b), typeof(acts), typeof(act_ds), typeof(z), typeof(ranges), typeof(Layer_Norm)
     return Dense{T,M,V,F,G,B,R,LN}(W, b, acts, act_ds, a, z, ranges, Layer_Norm)
 end
 

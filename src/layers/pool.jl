@@ -69,7 +69,7 @@ All subsequent calls are allocation-free.
 * `x`: input array, shape `(L..., C, batch)`.
 """
 function forward(layer::Pool{T}, x::AbstractArray{T}) where T
-    C_in  = size(x, ndims(x) - 1)
+    C_in = size(x, ndims(x) - 1)
     batch = size(x, ndims(x))
 
     # First pass = initialize `z`
@@ -82,7 +82,7 @@ function forward(layer::Pool{T}, x::AbstractArray{T}) where T
 
     backend = KernelAbstractions.get_backend(x)
     _pool_forward_kernel!(backend)(z, x, layer.op; ndrange = (C_in, batch))
-    KernelAbstractions.synchronize(backend)
+
     return z
 end
 
@@ -93,11 +93,11 @@ Similar as [`forward`](@ref), but it allows multi batched forward pass. `layerMu
 holds the (pre-allocated, fixed `buffer_size`) output of this pass.
 """
 function forward(layer::Pool{T}, x::AbstractArray{T}, layerMulti) where T
-    C_in  = size(x, ndims(x) - 1)
+    C_in = size(x, ndims(x) - 1)
     batch = size(x, ndims(x))
     backend = KernelAbstractions.get_backend(x)
     _pool_forward_kernel!(backend)(layerMulti.a, x, layer.op; ndrange = (C_in, batch))
-    KernelAbstractions.synchronize(backend)
+
     return layerMulti.a
 end
 

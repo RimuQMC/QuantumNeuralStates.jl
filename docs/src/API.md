@@ -24,11 +24,15 @@ _pool_extremum!
 _pool_backward!
 
 chain_signature
+encoding_signature
+nn_signature
 _signature
 _write_architecture
 _write_weights
 _write_addrs
 _write_input_scale
+_write_mf
+parse_encoding
 _format_addr
 
 _actname
@@ -39,14 +43,13 @@ _flag_mem
 _group
 _fmt_bytes
 _mem_array
-memory_estimate
 
-SCALE_FUNCTIONS
 _set_params!
 addrs_random
-final_elocs_statistics!
 safe_denom
 select_device
+RunningMean
+is_outlier!
 
 center_order
 grid_dims
@@ -75,13 +78,31 @@ LayerNorm_multiforward
 
 _activation_health
 _print_stats
+_prepare_input_kernel!
+_prepare_input_single_kernel!
+_prepare_input_stream_kernel!
+_find_column
+_column_start
 
 cg_matvec!
 
-elocs_clamping!
+weighted_variance_kernel!
+weighted_sum_kernel!
 
 _ansatz_first_modify!
 _ansatz_modify_new!
+
+_mf_addrs_kernel!
+_mf_offdiag_kernel!
+_to_backend
+
+build_model
+
+solve_self_consistent_eta
+calc_omega_denominator
+calc_f
+strong_coupling_amplitudes
+_mf_func_froehlich
 ```
 
 ## Index

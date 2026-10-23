@@ -11,8 +11,8 @@ closest first. Works for any D:
 """
 function center_order(dims::NTuple{D,Int}; metric::Symbol=:l1) where {D}
     centre = ntuple(d -> (dims[d] + 1) / 2, D)
-    cart   = CartesianIndices(dims)
-    M      = length(cart)
+    cart = CartesianIndices(dims)
+    M = length(cart)
 
     dist(ci) = begin
         diffs = ntuple(d -> abs(ci[d] - centre[d]), D)
