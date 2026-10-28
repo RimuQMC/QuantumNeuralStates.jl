@@ -48,7 +48,7 @@ device = select_device()
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
-N = 100 # number of particles
+N = 10 # number of particles
 # M = 10 # number of sites
 # addr = near_uniform(BoseFS{N,M}) # Rimu
 # H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
@@ -71,15 +71,15 @@ model = Chain(input,
               # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
               # Dense(500=>1, identity; batch=batch, device=device); 
               Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-              Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
               Pool(:sum; device=device),
-              Dense(1=>1, identity; batch=batch, device=device);
+              Dense(1=>1, identity; batch=batch, device=device, init_scale=1);
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
-                      input_scale_func=sqrt, mean_field=false)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
+                      input_scale_func=identity, mean_field=false)#, jacobian_statistics=true, neuron_statistics=true)#; multiforward_buffer=batch*500) # NN ansatz for wave-functiwn
 
 # -------------------------------------------------------------------
 # ALL TRAINING VARIABLES
@@ -129,9 +129,9 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/example_test5.txt"
-SAVE_WEIGHTS = false
-LOADFILE = "./weights/example_test4.txt"
+SAVEFILE = "./weights/test_id_occ3_N10.txt"
+SAVE_WEIGHTS = true
+LOADFILE = "./weights/test_id_occ2_N10.txt"
 LOAD_WEIGHTS = true
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false

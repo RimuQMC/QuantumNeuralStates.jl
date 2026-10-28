@@ -23,11 +23,12 @@ Allocation-free at runtime — all intermediate results are stored in pre-alloca
 * `device`: device function deciding where the layer lives, e.g. `identity` for CPU 
             ,`cu` for GPU (CUDA), or `mtl` for GPU (Metal).
 * `layer_norm`: if `true`, attaches a [`LayerNorm`](@ref) layer after the activation.
+* `init_scale`: allows rescaling of layer's weights during initialisation (`weights .*= init_scale`).
 
 ## Weight Initialisation
-* `He` initialisation (`sqrt(2/in)`) for `relu` and `gelu`
-* `Glorot/Xavier` initialisation (`sqrt(2/(in+out))`) for all other activations
-* Biases initialised to zero
+* `He` initialisation (`sqrt(2/in)`) for `relu` and `gelu`.
+* `Glorot/Xavier` initialisation (`sqrt(2/(in+out))`) for all other activations.
+* Biases initialised to zero.
 
 # Example
 ```julia
@@ -52,11 +53,11 @@ struct Dense{T,M<:AbstractMatrix{T},V<:AbstractVector{T},F<:Union{Function,Tuple
 end
 # single-activation constructor (R=Nothing)
 function Dense(channels::Pair{Int,Int}, act::Function;
-               batch::Int=1, device::Function=identity, layer_norm=false)
+               batch::Int=1, device::Function=identity, layer_norm=false, init_scale::Real=1)
     in, out = channels.first, channels.second
     T = Float32
     std = _init_std(T, in, out, act)     # see note below re: He/Glorot dispatch
-    W = device(randn(T, out, in) .* std)
+    W = device(randn(T, out, in) .* std .* T(init_scale))
     b = device(zeros(T, out))
     a = device(zeros(T, out, batch))
     z = device(zeros(T, out, batch))

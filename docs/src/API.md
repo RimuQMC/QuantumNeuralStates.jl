@@ -91,6 +91,8 @@ weighted_sum_kernel!
 
 _ansatz_first_modify!
 _ansatz_modify_new!
+Rimu.Interfaces.deposit!
+Rimu.Interfaces.apply_operator!
 
 _mf_addrs_kernel!
 _mf_offdiag_kernel!

@@ -150,6 +150,7 @@ allocation-free at runtime.
 * `device`: device function deciding where the layer lives, e.g. `identity` for CPU,
             `cu` for GPU (CUDA), or `mtl` for GPU (Metal).
 * `Layer_Norm`: no need for it in this layer type (default=nothing).
+* `init_scale`: allows rescaling of layer's weights during initialisation (`weights .*= init_scale`).
 
 # Notes
 The kernel `W` has shape `(kernel_size..., C_in, C_out)`. With
@@ -157,9 +158,9 @@ The kernel `W` has shape `(kernel_size..., C_in, C_out)`. With
 number of input/output connections).
 
 ## Weight Initialisation
-* `He` initialisation (`sqrt(2/fan_in)`) for `relu` and `gelu`
-* `Glorot/Xavier` initialisation (`sqrt(2/(fan_in+fan_out))`) for all other activations
-* Biases initialised to zero
+* `He` initialisation (`sqrt(2/fan_in)`) for `relu` and `gelu`.
+* `Glorot/Xavier` initialisation (`sqrt(2/(fan_in+fan_out))`) for all other activations.
+* Biases initialised to zero.
 
 # Example
 ```julia
@@ -184,7 +185,7 @@ mutable struct Conv{T, K<:AbstractArray{T}, V<:AbstractVector{T},
 end
 function Conv(kernel_size::NTuple{N, Int}, channels::Pair{Int,Int}, act::Function;
               stride::Int=1, device::Function=identity, Layer_Norm=false, 
-              batch::Int=1, pad::PadMode=NoPad()) where N
+              batch::Int=1, pad::PadMode=NoPad(), init_scale::Real=1) where N
     # L_in is spatial dimension of input 
     T = Float32
     C_in, C_out = channels.first, channels.second
@@ -192,7 +193,7 @@ function Conv(kernel_size::NTuple{N, Int}, channels::Pair{Int,Int}, act::Functio
     fan_out = prod(kernel_size) * C_out
     std = _init_std(T, fan_in, fan_out, act)
 
-    W = device(randn(T, (kernel_size..., C_in, C_out)) .* std)
+    W = device(randn(T, (kernel_size..., C_in, C_out)) .* std .* T(init_scale))
     b = device(zeros(T, C_out))
 
     act_d = _lookup_deriv(act)
