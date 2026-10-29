@@ -61,9 +61,9 @@ include("./truncation/center_fill_nD.jl")
 # ansatz
 include("./ansatz/ansatz_type.jl")
 export AnsatzType, LogPsi, LogPsiSignTanh
-export psi, log_psi!
+export psi!, log_psi!
 include("./ansatz/ansatz.jl")
-export NeuralAnsatz, prepare_input!, prepare_input_occ!, compute_logψ, multi_compute_logψ!
+export NeuralAnsatz, prepare_input!, compute_logψ, multi_compute_logψ!
 include("./ansatz/rimu_importance_sampling.jl")
 
 # VMC
@@ -77,6 +77,7 @@ include("./vmc/ctmc.jl")
 export ctmc_sample!
 include("./vmc/vmc.jl")
 export vmc_sample!, vmc_energy
+export final_elocs_statistics!
 
 # optimisers
 include("./optimisers/gradients.jl")
@@ -105,7 +106,7 @@ export JacobianBuffer, make_buffers, back_jacobian!, back!
 export forward, back_jacobian!, update!, addrs_random, final_elocs_statistics!
 export neuron_statistics, jacobian_statistics
 export save_master, load_master, log_markov_chain
-export memory_estimate, select_device
+export memory_estimate, select_device, sync_θ!
 
 export tanh, relu, sigmoid, gelu, tanh_fast, sigmoid_fast, identity, gelu_fast
 export tanh_deriv, relu_deriv, sigmoid_deriv, identity_deriv, tanh_fast_deriv, sigmoid_fast_deriv, gelu_deriv, gelu_fast_deriv

@@ -127,15 +127,16 @@ function JacobianBuffer(ansatz, buffers::Tuple)
 
     J = similar(refW, p, batch)
     θ = similar(refb, p)
-    for (layer, r) in zip(chain.layers, rs)
-        hasparams(layer) || continue
-        view(θ, r.W) .= reshape(layer.W, :)
-        view(θ, r.b) .= layer.b
-        if !isnothing(r.γ)
-            view(θ, r.γ) .= reshape(layer.layer_norm.γ, :)
-            view(θ, r.β) .= reshape(layer.layer_norm.β, :)
-        end
-    end
+    foreach((layer, r) -> _get_params!(θ, layer, r), chain.layers, rs)
+    # for (layer, r) in zip(chain.layers, rs)
+    #     hasparams(layer) || continue
+    #     view(θ, r.W) .= reshape(layer.W, :)
+    #     view(θ, r.b) .= layer.b
+    #     if !isnothing(r.γ)
+    #         view(θ, r.γ) .= reshape(layer.layer_norm.γ, :)
+    #         view(θ, r.β) .= reshape(layer.layer_norm.β, :)
+    #     end
+    # end
 
     δ_init = similar(last(ansatz.model.layers).z)
     fill!(δ_init, one(eltype(δ_init)))

@@ -48,7 +48,7 @@ device = select_device()
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
-N = 10 # number of particles
+N = 255 # number of particles
 # M = 10 # number of sites
 # addr = near_uniform(BoseFS{N,M}) # Rimu
 # H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
@@ -75,7 +75,7 @@ model = Chain(input,
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
               Pool(:sum; device=device),
-              Dense(1=>1, identity; batch=batch, device=device, init_scale=1);
+              Dense(1=>1, identity; batch=batch, device=device, init_scale=0.01);
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
@@ -91,7 +91,8 @@ phases = [
         vmc_sampler= :ctmc,
         stop       = StopBuffer(var_thr=0.001),
         η          = 0.01f0,
-        skip       = [(1, 20), (2, 20)],  # (epoch, B) → burnin B
+        skip       = [(1, 300), (2, 50), (10, 20)],  # (epoch, B) → burnin B
+        # skip       = [(1, 20)],  # (epoch, B) → burnin B
         # truncation = 3*3,
         block_size = 10, 
         block_min  = 6, 
@@ -129,9 +130,9 @@ phases = [
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/test_id_occ3_N10.txt"
+SAVEFILE = "./weights/test_id_occ3_N255long_init_scale1f-2.txt"
 SAVE_WEIGHTS = true
-LOADFILE = "./weights/test_id_occ2_N10.txt"
+LOADFILE = "./weights/test_id_occ2_N255long_init_scale1f-2.txt"
 LOAD_WEIGHTS = true
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false

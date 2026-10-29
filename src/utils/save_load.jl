@@ -324,7 +324,7 @@ function load_master(ansatz, filename::String)
         end
     end
 
-    set_centering!(ansatz)
+    set_centering!(ansatz; first=true)
 
     @info "Weights loaded from $filename ($p parameters)"
     return x, grid_changed

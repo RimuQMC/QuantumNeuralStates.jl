@@ -70,8 +70,8 @@ end
     _set_params!(layer, θ, r::LayerRange)
 
 Copy `layer`'s slice of the flat parameter vector `θ` (given by `r`) into
-`layer.W`/`layer.b` (and `layer.layer_norm.γ`/`β` if present). No-op for
-`FreeLayer`s (no parameters). Used by [`update!`](@ref).
+`layer.W`/`layer.b` (and `layer.layer_norm.γ`/`β` if present). 
+Used by [`update!`](@ref).
 """
 _set_params!(::FreeLayer, θ, r) = nothing            # no parameters
 function _set_params!(layer::ParametricLayer, θ, r::LayerRange)
@@ -82,6 +82,35 @@ function _set_params!(layer::ParametricLayer, θ, r::LayerRange)
         layer.layer_norm.β .= reshape(view(θ, r.β), size(layer.layer_norm.β))
     end
     return nothing
+end
+
+"""
+    _get_params!(θ, layer, r::LayerRange)
+
+Copy `layer`'s parameters (`W`, `b`, and `layer_norm.γ`/`β` if present) into
+the slice of the flat parameter vector `θ` given by `r`. Inverse of
+[`_set_params!`](@ref).
+"""
+_get_params!(θ, ::FreeLayer, r) = nothing
+function _get_params!(θ, layer::ParametricLayer, r::LayerRange)
+    view(θ, r.W) .= reshape(layer.W, :)
+    view(θ, r.b) .= layer.b
+    if !isnothing(r.γ)
+        view(θ, r.γ) .= reshape(layer.layer_norm.γ, :)
+        view(θ, r.β) .= reshape(layer.layer_norm.β, :)
+    end
+    return nothing
+end
+
+"""
+    sync_θ!(jac::JacobianBuffer, ansatz)
+
+Refresh `jac.θ` from the current weights of `ansatz.model`. Call this after
+modifying the network's parameters directly.
+"""
+function sync_θ!(jac::JacobianBuffer, ansatz)
+    foreach((layer, r) -> _get_params!(jac.θ, layer, r), ansatz.model.layers, jac.ranges)
+    return jac.θ
 end
 
 """
@@ -282,8 +311,33 @@ function is_outlier!(r::RunningMean{T}, x::T; up::Bool = true,
     return false
 end
 
-function set_centering!(ansatz)
-    out = ansatz.model(ansatz.model.x)
+"""
+    set_centering!(ansatz; first=false)
+
+Set `ansatz.logψ_centering` to the maximum of the network output for log ψ,
+and return it.
+
+The output of the neural network for log ψ can drift by an arbitrary constant
+during training, since the normalization of the wavefunction is not fixed.
+Subtracting this centering value keeps the values in a numerically safe range,
+for example to avoid overflow in `exp(logψ)`.
+
+# Keyword arguments
+- `first::Bool=false`: if `true` (initialization, or after loading weights),
+  the centering is computed from `compute_logψ` at the starting address of
+  `ansatz.hamiltonian`. If `false` - default (inside the training loop), it is computed by
+  re-evaluating `ansatz.model` on the last input cached in `ansatz.model.x`.
+
+# Returns
+- The new value of `ansatz.logψ_centering`.
+"""
+function set_centering!(ansatz; first=false)
+    if first # initialization phase / loading weights
+        addr = starting_address(ansatz.hamiltonian)
+        out = compute_logψ(ansatz, addr)
+    else # training loop - centering set from last input saved in NN model::Chain
+        out = ansatz.model(ansatz.model.x)
+    end
     ansatz.logψ_centering = maximum(out)
     return ansatz.logψ_centering
 end

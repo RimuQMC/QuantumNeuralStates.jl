@@ -153,6 +153,9 @@ with different parameters.
         allows to increase truncation with each phase. Allowing smoother 
         increase in input truncation space. It is recommended to ONLY increase
         truncation value! (defaultly nothing).
+* `output_scale`: allows to rescale the weights in output layer of Neural Network. It has
+        similar goal as `init_scale` in [`Dense`](@ref) or [`Conv`](@ref) to supress 
+        wave-function ratios over unstable sectors (eg. `truncation` increase).
 * `block_size`: define how many iterations should be stuck to `block` for 
         printout (happens in blocks) and block statistics [`BlockStats`](@ref),
         [`block_summary`](@ref) (default `10`).
@@ -183,6 +186,7 @@ Base.@kwdef struct TrainingPhase
     skip::Vector{Tuple{Int,   Int}} = [(1, 100)]
     η_decrease::Vector{Tuple{Float32,Float32}} = []
     truncation::Union{Nothing, Int} = nothing
+    output_scale::Float32 = 1f0
     block_size::Int = 10
     block_min::Int = 5
     patience::Int = 3

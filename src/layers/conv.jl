@@ -149,7 +149,7 @@ allocation-free at runtime.
 * `batch`: batch size.
 * `device`: device function deciding where the layer lives, e.g. `identity` for CPU,
             `cu` for GPU (CUDA), or `mtl` for GPU (Metal).
-* `Layer_Norm`: no need for it in this layer type (default=nothing).
+* `Layer_Norm`: no need for it in this layer type (default=nothing). DOES NOT EXIST HERE.
 * `init_scale`: allows rescaling of layer's weights during initialisation (`weights .*= init_scale`).
 
 # Notes

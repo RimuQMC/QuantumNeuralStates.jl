@@ -71,11 +71,11 @@ function Dense(channels::Pair{Int,Int}, act::Function;
 end
 # multi-activation constructor (R=NTuple{N,UnitRange})
 function Dense(channels::Pair{Int,Int}, acts::NTuple{N,Function};
-               batch::Int=1, device::Function=identity, layer_norm=false) where N
+               batch::Int=1, device::Function=identity, layer_norm=false, init_scale::Real=1) where N
     in, out = channels.first, channels.second
     T = Float32
     std = _init_std(T, in, out, acts)     # see note below re: He/Glorot dispatch
-    W = device(randn(T, out, in) .* std)
+    W = device(randn(T, out, in) .* std .* T(init_scale))
     b = device(zeros(T, out))
     a = device(zeros(T, out, batch))
     z = device(zeros(T, out, batch))

@@ -107,6 +107,7 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                 "Block", "E", "E_err", "Var", "|ΔE|", "|Δvar|", "Accept", "η_eff (LR)")
         println(repeat("─", 100))
 
+        # truncation checks
         if phase.truncation !== nothing
             if ansatz.truncation === nothing || phase.truncation > ansatz.truncation.k
                 change_truncation!(ansatz, H, phase.truncation)
@@ -114,6 +115,14 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         end
         if ansatz.truncation !== nothing
             println(ansatz.truncation)
+        end
+
+        # output weights scaling
+        if !isone(phase.output_scale)
+            last_layer = last(ansatz.model.layers)
+            last_layer.W .*= Float32(phase.output_scale)
+            sync_θ!(jac_buf, ansatz)
+            set_centering!(ansatz)
         end
 
         # build phase's optimiser buffer

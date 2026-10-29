@@ -45,6 +45,7 @@ _fmt_bytes
 _mem_array
 
 _set_params!
+_get_params!
 addrs_random
 safe_denom
 select_device
