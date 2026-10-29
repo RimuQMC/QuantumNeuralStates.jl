@@ -19,7 +19,7 @@ function apply_loss_mode!(grad, E_locs, w, E_mean, variance, α, mode)
     elseif mode === :variance
         @. grad += α * 2 * w * ((E_locs - E_mean)^2 - variance)
     elseif mode === :std
-        σ = sqrt(variance)
+        σ = sqrt.(variance)
         @. grad += α * w * ((E_locs - E_mean)^2 - variance) / σ
     elseif mode === :logvar
         @. grad += α * 2 * w * ((E_locs - E_mean)^2 - variance) / (variance + 1)
@@ -69,11 +69,11 @@ handle single loss function but also composite loss functions defined in `mode`.
     See also [`apply_loss_composite!`](@ref).
 """
 function apply_loss!(grad, E_locs, w, E_mean, variance, mode)
-    fill!(grad, 0.0)
+    fill!(grad, 0f0)
 
     if mode isa Tuple
         apply_loss_composite!(grad, E_locs, w, E_mean, variance, mode)
     else
-        apply_loss_mode!(grad, E_locs, w, E_mean, variance, 1.0, mode)
+        apply_loss_mode!(grad, E_locs, w, E_mean, variance, 1f0, mode)
     end
 end

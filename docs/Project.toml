@@ -6,3 +6,4 @@ QuantumNeuralStates = "85459f3a-8d13-41c4-989d-5d8502c78558"
 
 [sources]
 Gutzwiller = {url = "https://github.com/RimuQMC/Gutzwiller.jl", rev = "master"}
+QuantumNeuralStates = {path = ".."}

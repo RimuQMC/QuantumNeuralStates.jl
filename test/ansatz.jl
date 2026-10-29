@@ -8,14 +8,14 @@ using Test
 @testset "NeuralAnsatz" begin
     T = Float32
     M, N, batch = 3, 1, 3
-    addr  = near_uniform(BoseFS{N,M})
-    H     = HubbardReal1D(addr; u=0.1)
-    enc   = OccupationEncoding((M,), H)
+    addr = near_uniform(BoseFS{N,M})
+    H = HubbardReal1D(addr; u=0.1)
+    enc = OccupationEncoding((M,), H)
     model = build_model("FCNN", enc, [10, 10, 10, 1], tanh_fast; batch=batch)
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
     v1, v2, v3 = [1, 0, 0], [0, 1, 0], [0, 0, 1]
-    x     = T[v1 v2 v3]                                  # (M, batch), one column per address
+    x = T[v1 v2 v3]                                  # (M, batch), one column per address
     addrs = [BoseFS(v1), BoseFS(v2), BoseFS(v3)]
 
     @testset "construction" begin
