@@ -114,45 +114,48 @@ function sync_θ!(jac::JacobianBuffer, ansatz)
 end
 
 """
-    addrs_random(ham, addr, batch)
+    addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max = 10)
 
-Generates random input vector of addresses (in Rimu notation) for whole batch.
+`batch` random addresses with occupations between 0 and `n_max` per mode, only on the
+`active` modes (all others stay 0, e.g. truncated sites).
+
+* Hamiltonian with `mode_cutoff` (no fixed particle number): each active mode gets an
+  independent occupation from `0:min(n_max, mode_cutoff)`.
+* Otherwise (fixed particle number N = num_particles(addr)): the N particles are placed
+  one at a time on random active modes with fewer than `n_max` particles.
 """
-function addrs_random(ham, addr, batch)
-  cap_bool = false
-  M = num_modes(addr)
-  N = try
-        ham.mode_cutoff
-      catch
-        cap_bool = true
-        num_particles(addr)
-      end
-  tmp   = Vector{Int}(undef, M)
-  addrs = Vector{typeof(addr)}(undef, batch)
+function addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max::Int = 10)
+    M = num_modes(addr)
+    fixed_N = !hasproperty(ham, :mode_cutoff)
+    tmp   = Vector{Int}(undef, M)
+    addrs = Vector{typeof(addr)}(undef, batch)
 
-  for i in 1:batch  
-    cap = 0
-    for m in 1:length(tmp)  # number of modes
-        if cap_bool
-            remaining_modes = M - m
-            if remaining_modes == 0
-                tmp[m] = N - cap  # last mode gets whatever is left
-            else
-                r = rand(0:(N-cap))
-                tmp[m] = r 
-                cap += r
+    if fixed_N
+        N = num_particles(addr)
+        N <= n_max * length(active) ||
+            throw(ArgumentError("cannot place $N particles on $(length(active)) modes with n_max = $n_max"))
+    else
+        n_top = min(n_max, ham.mode_cutoff)
+    end
+
+    for i in 1:batch
+        fill!(tmp, 0)                                # truncated modes stay 0
+        if fixed_N
+            for _ in 1:N                             # one particle at a time
+                m = rand(active)
+                while tmp[m] >= n_max                # mode full → pick another
+                    m = rand(active)
+                end
+                tmp[m] += 1
             end
         else
-            r      = rand(0:N)
-            tmp[m] = r 
+            for m in active
+                tmp[m] = rand(0:n_top)               # independent, 0 … n_max
+            end
         end
+        addrs[i] = typeof(addr)(tmp)
     end
-    # a         = typeof(addr)(tmp)
-    a = Base.typename(typeof(addr)).wrapper(tmp)
-    addrs[i]  = a
-  end
-  
-  return addrs
+    return addrs
 end
 
 """
