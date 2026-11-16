@@ -1,4 +1,5 @@
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"

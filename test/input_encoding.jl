@@ -5,6 +5,7 @@ using QuantumNeuralStates
 using Rimu
 using Test
 using Random
+using BenchmarkTools
 
 @testset "Input Encodings" begin
     T = Float32
@@ -235,9 +236,10 @@ using Random
         x = QuantumNeuralStates.prepare_input!(na, addrs, na.model.x)    # warm-up
         QuantumNeuralStates.prepare_chain_input!(na.model, x)
 
-        @test @allocated(QuantumNeuralStates.prepare_input!(na, addrs, na.model.x)) <= 256
-        @test @allocated(QuantumNeuralStates.encode!(na.model.xe, enc)) <= 256        # launch only
-        @test @allocated(QuantumNeuralStates.prepare_chain_input!(na.model, x)) <= 256
+        limit = 256
+        @test @ballocated(QuantumNeuralStates.prepare_input!($na, $addrs, $(na.model.x))) <= limit
+        @test @ballocated(QuantumNeuralStates.encode!($(na.model.xe), $enc)) <= limit
+        @test @ballocated(QuantumNeuralStates.prepare_chain_input!($(na.model), $x)) <= limit
     end
 
     @testset "1D grid" begin
