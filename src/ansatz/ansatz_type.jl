@@ -153,7 +153,7 @@ struct LogPsiSignTanh <: AnsatzType
 end
 LogPsiSignTanh() = LogPsiSignTanh(2)
 
-function log_psi!(::LogPsiSignTanh, ansatz, vals::AbstractArray)
+function log_psi!(::LogPsiSignTanh, ansatz, vals::AbstractArray{T}) where {T}
     out1 = view(vals, 1, :)
     out2 = view(vals, 2, :)
 

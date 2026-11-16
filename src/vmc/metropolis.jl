@@ -90,7 +90,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz;
         end
     end
 
-    # --- STEP 3: NN on starting addresses -----------------------------------------
+    # --- STEP 3: NN on starting addresses and gradients ---------------------------
     vals_n = compute_logψ(ansatz, addrs_n)
 
     if !vmc_buf.start
