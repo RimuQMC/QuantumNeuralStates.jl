@@ -4,15 +4,16 @@
 ```@meta
 CurrentModule = QuantumNeuralStates
 ```
-## Ansatze
+## Wave-function ansatze
 ```@docs
 AnsatzType
 LogPsi
 LogPsiSignTanh
 
-psi
+psi!
 log_psi!
-init_gradient_seed
+init_gradient_seed!
+set_centering!
 ```
 ## Neural Ansatz
 ```@docs
@@ -22,11 +23,10 @@ _choose_meanfield_function
 TruncationBuffer
 violates_truncation
 
+SCALE_FUNCTIONS
+
 prepare_input!
-prepare_input_occ!
 compute_logψ
-compute_mflogψ!
-compute_ψ_64
 multi_compute_logψ!
 
 neuron_statistics

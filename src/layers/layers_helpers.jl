@@ -99,7 +99,7 @@ n_params(layer::ParametricLayer) =
     length(layer.W) + length(layer.b) + n_params(layer.layer_norm)
 
 n_params(::FreeLayer) = 0   # no learnable parameters
-n_params(::Nothing)   = 0
+n_params(::Nothing) = 0
 
 """
     MultiForwardLayer
@@ -108,10 +108,8 @@ This struct mimic each [`Chain`](@ref) layer output variables made for customize
 forward passes. See also [`MultiForwardBuffer`](@ref).
 
 # Arguments
-
 * `a`: is buffer for pre-actiovation and post-activation variable in each Chain layer.
-* `layer_norm`: is buffer for layer normalisation struct with new batch size.
-    
+* `layer_norm`: is buffer for layer normalisation struct with new batch size. 
 """
 mutable struct MultiForwardLayer{A<:AbstractArray,L}
     a::A

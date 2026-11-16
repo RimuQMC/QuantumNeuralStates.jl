@@ -16,9 +16,9 @@ PoolBuffer(::Pool, x::AbstractArray) = PoolBuffer(similar(x))
 Base.show(io::IO, ::MIME"text/plain", ::PoolBuffer) = print(io, "PoolBuffer")
 
 """
-    make_buffer(l::Pool, x) -> PoolBuffer
+    make_buffer(layer::Pool, x) -> PoolBuffer
 
-Build the [`PoolBuffer`](@ref) for `l`, sized from `x`.
+Build the [`PoolBuffer`](@ref) for `layer::Pool`, sized from `x`.
 """
 make_buffer(l::Pool, x) = PoolBuffer(l, x)
 
@@ -50,7 +50,7 @@ gradient; `δx` must be pre-zeroed, since every other position gets none.
 """
 @kernel function _pool_back_extremum_kernel!(δx, δ, x, ::Val{op}) where op
     c, b = @index(Global, NTuple)
-    Nsp  = ndims(x) - 2
+    Nsp = ndims(x) - 2
     spatial = CartesianIndices(size(x)[1:Nsp])
 
     best_p = first(spatial)
@@ -73,7 +73,6 @@ Launch [`_pool_back_uniform_kernel!`](@ref).
 function _pool_uniform!(δx, δ, scale)
     backend = KernelAbstractions.get_backend(δx)
     _pool_back_uniform_kernel!(backend)(δx, δ, eltype(δx)(scale); ndrange = size(δx))
-    KernelAbstractions.synchronize(backend)
 end
 
 """
@@ -86,7 +85,6 @@ function _pool_extremum!(op::Val, δx, δ, x)
     fill!(δx, zero(eltype(δx)))
     _pool_back_extremum_kernel!(backend)(δx, δ, x, op;
         ndrange = (size(x, ndims(x)-1), size(x, ndims(x))))
-    KernelAbstractions.synchronize(backend)
 end
 
 """

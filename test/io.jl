@@ -51,7 +51,7 @@ const tmpdir = mktempdir()
         addr = near_uniform(BoseFS{N,M})
         H = HubbardReal1D(addr; u=0.1)
         enc = OccupationEncoding((M,), H)
-        model = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
+        model = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh; batch=batch)
         ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
         addrs_n = fill(addr, batch)
 
@@ -60,30 +60,32 @@ const tmpdir = mktempdir()
 
         buffers = make_buffers(ansatz.model)
         jac_buf = JacobianBuffer(ansatz, buffers)
-        x = prepare_input!(ansatz, addrs_n, ansatz.x_cpu_buffer)
+        x = prepare_input!(ansatz, addrs_n, ansatz.model.x)
 
         save_master(file, jac_buf.θ, addrs_n, ansatz)
         @test isfile(file)
 
         # create new network with new (random-init) parameters
         enc = OccupationEncoding((M,), H)
-        model2 = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
+        model2 = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh; batch=batch)
         ansatz2 = NeuralAnsatz(LogPsi(), H, model2, batch)
         buffers2 = make_buffers(ansatz2.model)
 
-        x2 = load_master(ansatz2, file)
+        x2, grid_changed = load_master(ansatz2, file)
         jac_buf2 = JacobianBuffer(ansatz2, buffers2)
 
         @test QuantumNeuralStates.chain_signature(ansatz.model) == QuantumNeuralStates.chain_signature(ansatz2.model)
         @test x == x2
+        @test grid_changed == false
         @test jac_buf.θ == jac_buf2.θ
         @test ansatz.input_scale_func == ansatz2.input_scale_func
         @test ansatz.max_norm == ansatz2.max_norm
         @test ansatz.normalisation == ansatz2.normalisation
+        @test ansatz.meanfield == ansatz2.meanfield
 
         @testset "architecture mismatch is caught" begin
             enc = OccupationEncoding((M,), H)
-            model3 = build_model("FCNN", enc, [M, 20, 20, 1], tanh_fast; batch=batch)   # different hidden widths
+            model3 = build_model("FCNN", enc, [M, 20, 20, 1], tanh; batch=batch)   # different hidden widths
             ansatz3 = NeuralAnsatz(LogPsi(), H, model3, batch)
             @test_throws ErrorException load_master(ansatz3, file)
         end

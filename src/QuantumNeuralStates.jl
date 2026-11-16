@@ -2,13 +2,16 @@ module QuantumNeuralStates
 
 using LinearAlgebra
 using NNlib: tanh, relu, sigmoid, identity, tanh_fast, sigmoid_fast, gelu
-using NNlib: scatter
 using Rimu
 using Gutzwiller
 using Printf
 using Statistics
+using Random
 using KernelAbstractions
+using Atomix
+using GPUArraysCore: @allowscalar
 using SpecialFunctions: loggamma
+using Plots
 
 const PACKAGE_NAME = "QuantumNeuralStates"
 
@@ -19,6 +22,10 @@ const PACKAGE_NAME = "QuantumNeuralStates"
 Machine Learning package designed to work with Rimu ([online](https://RimuQMC.github.io/Rimu.jl/)).
 """
 # QuantumNeuralStates
+
+function __init__()
+    default_logger() # to enable Rimu work on GPU
+end
 
 include("./activations.jl")
 include("./layers/layers_helpers.jl")
@@ -35,6 +42,7 @@ include("./backpropagation/backpropagation.jl") # needs to be included as last b
 include("./utils/save_load.jl")
 include("./utils/network_health_statistics.jl")
 include("./utils/utils.jl")
+include("./utils/gpu_helpers.jl")
 include("./utils/io.jl")
 
 # Dispatch functions for Importance Sampling in Rimu
@@ -54,22 +62,24 @@ include("./truncation/center_fill_nD.jl")
 # ansatz
 include("./ansatz/ansatz_type.jl")
 export AnsatzType, LogPsi, LogPsiSignTanh
-export psi, log_psi!
+export psi!, log_psi!
 include("./ansatz/ansatz.jl")
-export NeuralAnsatz, prepare_input!, prepare_input_occ!, compute_logψ, multi_compute_logψ!
+export NeuralAnsatz, prepare_input!, compute_logψ, multi_compute_logψ!
 include("./ansatz/rimu_importance_sampling.jl")
 
 # VMC
 include("./vmc/vmc_helpers.jl")
-export VMCBuffer
+export VMCBuffer, collect_offdiagonals!
+export ctmc_state_proposal!, get_ctmc_weights!, metropolis_state_proposal!, metropolis_count_ratio!
 include("./vmc/local_energy.jl")
 export calculate_local_energy!
 include("./vmc/metropolis.jl")
-export metropolis_sample!, metropolis_heatbath_sample!
+export metropolis_sample!
 include("./vmc/ctmc.jl")
-export ctmc_sample!, ctmc_heatbath_sample!
+export ctmc_sample!
 include("./vmc/vmc.jl")
 export vmc_sample!, vmc_energy
+export final_elocs_statistics!
 
 # optimisers
 include("./optimisers/gradients.jl")
@@ -95,10 +105,11 @@ export nchannels, nsites, NoEncoding, OccupationEncoding, MomentumEncoding
 export Chain, Dense, Conv, Pool
 export NoPad, Periodic, Zeros # padding structs
 export JacobianBuffer, make_buffers, back_jacobian!, back!
-export forward, back_jacobian!, update!, addrs_random, final_elocs_statistics!
+export forward, update!
 export neuron_statistics, jacobian_statistics
 export save_master, load_master, log_markov_chain
-export memory_estimate, select_device
+export memory_estimate, select_device, sync_θ!, addrs_random
+export GPUGrowRowBuffer, GPUGrowColumnBuffer
 
 export tanh, relu, sigmoid, gelu, tanh_fast, sigmoid_fast, identity, gelu_fast
 export tanh_deriv, relu_deriv, sigmoid_deriv, identity_deriv, tanh_fast_deriv, sigmoid_fast_deriv, gelu_deriv, gelu_fast_deriv

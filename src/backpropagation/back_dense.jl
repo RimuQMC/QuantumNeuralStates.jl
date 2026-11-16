@@ -2,7 +2,11 @@
 """
     DenseBuffer(layer::Dense)
 
-Pre-allocated buffer for backpropagation and Jacobian calculations through a `Dense` layer.
+Pre-allocated workspace for backpropagation through a [`Dense`](@ref) layer.
+
+# Fields
+- `δz`: gradient w.r.t. the pre-activation, size `(out, batch)`.
+- `δ`: gradient sent to the previous layer, size `(in, batch)`.
 """
 struct DenseBuffer{DZ <: AbstractArray, D <: AbstractArray}
     δz::DZ # new sending output (out, batch)
@@ -17,6 +21,12 @@ function DenseBuffer(layer::Dense)
 end
 Base.show(io::IO, ::MIME"text/plain", ::DenseBuffer) = print(io, "DenseBuffer")
 
+
+"""
+    make_buffer(layer::Dense, x) -> DenseBuffer
+
+Allocate a backprop buffer for `layer::Dense`. Returns a [`DenseBuffer`](@ref).
+"""
 make_buffer(l::Dense, x) = DenseBuffer(l)
 
 """
@@ -28,7 +38,7 @@ This function is called inside [`back!`](@ref) function.
 """
 @inline function _fill_JW_Jb!(J_W, J_b, W, δz, x)
     out_dim, in_dim = size(W)
-    batch   = size(δz, 2)
+    batch = size(δz, 2)
     J_W .= reshape(δz, out_dim, 1, batch) .* reshape(x, 1, in_dim, batch)
     J_b .= δz
 end
@@ -49,7 +59,6 @@ into the contiguous arrays `J_W` and `J_b`.
 Returns the accumulated gradient `buf.δ` for next layer calculations layer.
 
 # Arguments
-
 * `layer`: layer of Neural Network.
 * `buf`: custom layer buffer that holds input and output gradients of 
     backpropagation.

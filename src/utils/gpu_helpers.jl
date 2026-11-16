@@ -1,0 +1,103 @@
+
+"""
+    ensure_capacity!(buf, total) -> data
+
+Make sure the growing dimension of `buf` has room for at least `total` entries, and
+return the full device array `buf.data`.
+
+* [`GPUGrowColumnBuffer`](@ref): the LAST dimension grows, `size(data) = (fixed..., capacity)`.
+* [`GPUGrowRowBuffer`](@ref): the FIRST dimension grows, `size(data) = (capacity, fixed...)`.
+
+If `total > buf.capacity`, a new array with `capacity = ceil(1.2 * total)` is allocated on
+the same backend and the old one is freed. Otherwise nothing happens.
+
+# Arguments
+* `buf`: [`GPUGrowColumnBuffer`](@ref) or [`GPUGrowRowBuffer`](@ref).
+* `total`: required size of the growing dimension.
+
+# Returns
+* `data`: the full array `buf.data`, including unused capacity. The caller selects the
+    valid part, e.g. `view(data, :, 1:total)` or `view(data, 1:counts[b], b)`.
+
+# Notes
+* Growing does NOT preserve old contents; fill the buffer after calling `ensure_capacity!`.
+* The capacity only grows, never shrinks. The 20% margin avoids reallocating on every
+    small increase.
+* After growing, the old array is released with `KernelAbstractions.unsafe_free!`. Any
+    reference or view to the previous `buf.data` kept elsewhere becomes invalid, so always
+    use the returned array (or re-read `buf.data`) after the call.
+"""
+function ensure_capacity! end
+
+"""
+    GPUGrowColumnBuffer(backend, T, fixed, init_capacity)
+    GPUGrowColumnBuffer(backend, T, init_capacity)          # 1D
+
+Device buffer of shape `(fixed..., capacity)`. The LAST dimension `capacity` grows,
+all leading dimensions are fixed. Typical use: network outputs `(n_out, n)`.
+
+[`ensure_capacity!`](@ref)`(buf, n)` guarantees `capacity ≥ n` and returns the full `buf.data`. 
+The valid part is chosen by the caller, e.g. `view(buf.data, :, 1:n)`. 
+Growing does not preserve old contents.
+"""
+mutable struct GPUGrowColumnBuffer{T, N, AT<:AbstractArray{T,N}, F<:Tuple}
+    data::AT
+    fixed::F
+    capacity::Int
+end
+function GPUGrowColumnBuffer(backend, ::Type{T}, fixed::Tuple, init_capacity::Int) where {T}
+    data = KernelAbstractions.allocate(backend, T, fixed..., init_capacity)
+    return GPUGrowColumnBuffer(data, fixed, init_capacity)
+end
+GPUGrowColumnBuffer(backend, ::Type{T}, init_capacity::Int) where {T} =
+    GPUGrowColumnBuffer(backend, T, (), init_capacity)
+
+function ensure_capacity!(buf::GPUGrowColumnBuffer{T}, total::Int) where {T}
+    if total > buf.capacity
+        new_capacity = ceil(Int, total * 1.2)
+        backend = KernelAbstractions.get_backend(buf.data)
+        olddata = buf.data
+        buf.data = KernelAbstractions.allocate(backend, T, buf.fixed..., new_capacity)
+        buf.capacity = new_capacity
+        KernelAbstractions.unsafe_free!(olddata)
+    end
+    # return view(buf.data, ntuple(_ -> Colon(), length(buf.fixed))..., 1:total)
+    return buf.data
+end
+
+"""
+    GPUGrowRowBuffer(backend, T, init_capacity, fixed)
+    GPUGrowRowBuffer(backend, T, init_capacity)       # 1D
+
+Device buffer of shape `(capacity, fixed...)`. The FIRST dimension `capacity` grows,
+all trailing dimensions are fixed. Typical use: off-diagonal slots `(K, B)`,
+where each parent's `K` slots are contiguous (column `b`).
+
+[`ensure_capacity!`](@ref)`(buf, n)` guarantees `capacity ≥ n` and returns the full `buf.data`. 
+The valid part is chosen by the caller, e.g. `view(buf.data, 1:counts[b], b)`. 
+Growing does not preserve old contents.
+"""
+mutable struct GPUGrowRowBuffer{T, N, AT<:AbstractArray{T,N}, F<:Tuple}
+    data::AT
+    capacity::Int
+    fixed::F
+end
+function GPUGrowRowBuffer(backend, ::Type{T}, init_capacity::Int, fixed::Tuple) where {T}
+    data = KernelAbstractions.allocate(backend, T, init_capacity, fixed...)
+    return GPUGrowRowBuffer(data, init_capacity, fixed)
+end
+GPUGrowRowBuffer(backend, ::Type{T}, init_capacity::Int) where {T} =
+    GPUGrowRowBuffer(backend, T, init_capacity, ())
+
+function ensure_capacity!(buf::GPUGrowRowBuffer{T}, total::Int) where {T}
+    if total > buf.capacity
+        new_capacity = ceil(Int, total * 1.2)
+        backend = KernelAbstractions.get_backend(buf.data)
+        olddata = buf.data
+        buf.data = KernelAbstractions.allocate(backend, T, new_capacity, buf.fixed...)
+        buf.capacity = new_capacity
+        KernelAbstractions.unsafe_free!(olddata)
+    end
+    return buf.data
+end
+

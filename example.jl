@@ -1,7 +1,7 @@
 using Rimu
 using QuantumNeuralStates
 
-# Choose what GPU you are using
+# Choose what GPU backend you are using
 using Metal     # device = mtl
 # using CUDA      # device = cu
 
@@ -15,25 +15,33 @@ device = select_device()
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
-N = 50 # number of particles
-M = 10 # number of sites
-addr = near_uniform(BoseFS{N,M}) # Rimu
-H = HubbardReal1D(addr; u=0.1) # Rimu
+N = 10 # phonon cutoff per site
+M = 11 # number of sites
+addr = BoseFS{missing, M}() # Rimu
+H = FroehlichPolaron{Float32}(addr; D = 1, alpha = 2, l = 5, mode_cutoff=N) # Rimu
 
 # -------------------------------------------------------------------
 # NN Model
 # -------------------------------------------------------------------
-batch  = 1024
+batch = 1024
 act = relu
-pad = Periodic()
-input = OccupationEncoding((10,), H; device=device)
+pad = Zeros()
+input = OccupationEncoding((11,), H; device=device)
 model = Chain(input,
-              Conv((3,), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
-              Conv((3,), 32=>32, act; batch=batch, device=device, pad=pad),
-              Pool(:mean; device=device),
-              Dense(32=>32, tanh; batch=batch, device=device, layer_norm=true), 
+              # FCNN example
+              Dense(nsites(input)*nchannels(input)=>32, act; batch=batch, device=device), 
+              Dense(32=>32, act; batch=batch, device=device), 
+              Dense(32=>32, act; batch=batch, device=device), 
               Dense(32=>1, identity; batch=batch, device=device); 
+
+              # CNN example
+              # Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
+              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              # Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
+              # Pool(:sum; device=device),
+              # Dense(1=>1, identity; batch=batch, device=device, init_scale=0.1);
+
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch) # NN ansatz for wave-function
@@ -48,7 +56,7 @@ phases = [
         vmc_sampler= :metropolis,
         stop       = StopBuffer(var_thr=1000),
         η          = 0.001f0,
-        skip       = [(1, 50), (300, 200)],  # (epoch, B) → burnin B
+        skip       = [(1, 50)],  # (epoch, B) → burnin B
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
@@ -58,15 +66,14 @@ phases = [
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
-        stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
-        η          = 0.001f0,
-        λ          = 0.001f0,
-        skip       = [(1, 20)],
-        η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
+        stop       = StopBuffer(var_thr=0.5),
+        η          = 0.01f0,
+        skip       = [(1, 20)],  # (epoch, B) → burnin B
+        η_decrease = [(1, 0.1)], # (var_thr, factor), if var < thr → η *= factor
         block_size = 10, 
         block_min  = 6, 
         patience   = 3,
-        max_epochs = 1000,
+        max_epochs = 300,
     ),
 ]
 
@@ -77,13 +84,15 @@ LOADFILE = ""
 LOAD_WEIGHTS = false
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false
+OCCFILE = "./fig/example_walker_distro.pdf" # saving plot of final walker distribution
+OCC_PLOT = true
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # TRAINING LOOP
 # --------------------------------------------------------------------------------------------------------------------------------------
 
-block_E_history, block_E_err_history, block_var_history, new_addrs = run_training_loop(H, ansatz, addr, phases; 
-                                                                            savefile=SAVEFILE, loadfile=LOADFILE, 
-                                                                            save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
-                                                                            markovfile=MARKOVFILE, markov=SAVE_MARKOV);
-
+E, E_err, var, new_addrs = run_training_loop(H, ansatz, addr, phases; 
+                                savefile=SAVEFILE, loadfile=LOADFILE, 
+                                save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
+                                occfile=OCCFILE, occplot=OCC_PLOT,
+                                markovfile=MARKOVFILE, markov=SAVE_MARKOV)

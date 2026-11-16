@@ -5,22 +5,23 @@ using QuantumNeuralStates
 using Rimu
 using Test
 using Random
+using BenchmarkTools
 
 @testset "Input Encodings" begin
-    T  = Float32
-    H  = FroehlichPolaron(BoseFS{missing,16}(); D=2, alpha=1, l=6)
+    T = Float32
+    H = FroehlichPolaron{T}(BoseFS{missing,16}(); D=2, alpha=1, l=6)
     sz = (4, 4)
     M, D = 16, 2
     ks = H.ks
 
     # configurations taken from H itself: vacuum, one-phonon and two-phonon states
-    vac    = starting_address(H)
+    vac = starting_address(H)
     one_ph = filter(a -> sum(onr(a)) == 1, unique(first.(collect(offdiagonals(H * vac)))))
     two_ph = filter(a -> sum(onr(a)) == 2, unique(first.(collect(offdiagonals(H * first(one_ph))))))
-    addrs  = vcat([vac], one_ph, two_ph)
-    batch  = length(addrs)
-    ph1    = one_ph[findfirst(a -> onr(a)[1] == 1, one_ph)]   # one phonon in mode 1, k = (-2π/6, -2π/6)
-    b_ph1  = findfirst(==(ph1), addrs)
+    addrs = vcat([vac], one_ph, two_ph)
+    batch = length(addrs)
+    ph1 = one_ph[findfirst(a -> onr(a)[1] == 1, one_ph)]   # one phonon in mode 1, k = (-2π/6, -2π/6)
+    b_ph1 = findfirst(==(ph1), addrs)
 
     @test !isempty(one_ph)                                    # setup sanity checks
     @test !isempty(two_ph)
@@ -69,7 +70,7 @@ using Random
         @testset "errors" begin
             model = Chain(NoEncoding(10), Dense(10=>3, identity; batch=nb); batch=nb)
             @test_throws ErrorException model(rand(Float32, 12, nb))        # wrong shape
-            @test_throws ErrorException Chain(NoEncoding(10),                  # wrong width
+            @test_throws ErrorException Chain(NoEncoding(10),               # wrong input
                                               Dense(12=>3, identity; batch=nb); batch=nb)
             H = FroehlichPolaron(BoseFS{missing,16}(); D=2, alpha=1, l=6)
             @test_throws ErrorException NeuralAnsatz(LogPsi(), H,
@@ -129,7 +130,7 @@ using Random
                           Conv((3,3), nchannels(enc)=>4, relu; batch=batch, pad=Zeros()),
                           Pool(:sum),
                           Dense(4=>1, identity; batch=batch); batch=batch)
-            @test size(model.x)  == (4, 4, 3, batch)
+            @test size(model.x) == (4, 4, 3, batch)
             @test size(model.xe) == (M, 3, batch)
 
             model.xe[7, 2, 1] = 5f0                          # site m = 7  →  (i, j) = (3, 2)
@@ -158,7 +159,7 @@ using Random
     @testset "encode! (hand-checked)" begin
         @testset "with occupation channel" begin
             enc = MomentumEncoding(sz, H)
-            xe  = zeros(T, M, 3, 2)
+            xe = zeros(T, M, 3, 2)
             xe[1, 1, 1] = 2f0                                # 2 phonons in mode 1, sample 1
             xe[6, 1, 2] = 3f0                                # 3 phonons in mode 6 (k = 0), sample 2
             QuantumNeuralStates.encode!(xe, enc)
@@ -170,7 +171,7 @@ using Random
 
         @testset "without occupation channel" begin
             enc = MomentumEncoding(sz, H; occupation=false)
-            xe  = zeros(T, M, 2, 1)
+            xe = zeros(T, M, 2, 1)
             xe[1, 2, 1] = 2f0                                # occupation sits in the last channel
             QuantumNeuralStates.encode!(xe, enc)
 
@@ -179,7 +180,7 @@ using Random
 
         @testset "OccupationEncoding is a no-op" begin
             enc = OccupationEncoding(sz, H)
-            xe  = rand(T, M, 1, 2)
+            xe = rand(T, M, 1, 2)
             xe0 = copy(xe)
             QuantumNeuralStates.encode!(xe, enc)
             @test xe == xe0
@@ -196,7 +197,7 @@ using Random
                             Dense(M=>4, relu; batch=batch),
                             Dense(4=>1, identity; batch=batch); batch=batch))
             na = NeuralAnsatz(LogPsi(), H, model, batch)
-            x  = QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)
+            x = QuantumNeuralStates.prepare_input!(na, addrs, na.model.x)
             QuantumNeuralStates.prepare_chain_input!(na.model, x)
             XE = Array(na.model.xe)
             @test all(XE[:, 1, b] == T.(onr(addrs[b])) for b in 1:batch)
@@ -204,28 +205,24 @@ using Random
     end
 
     @testset "MultiForwardBuffer with encoding" begin
-        enc   = MomentumEncoding(sz, H)
+        enc = MomentumEncoding(sz, H)
         model = Chain(enc,
                       Conv((3,3), nchannels(enc)=>4, relu; batch=batch, pad=Zeros()),
                       Pool(:sum),
                       Dense(4=>1, identity; batch=batch); batch=batch)
-        na  = NeuralAnsatz(LogPsi(), H, model, batch; multiforward_buffer=2batch)
+        na = NeuralAnsatz(LogPsi(), H, model, batch; multi_forward_buffer=2*batch)
         mfb = na.multi_forward_buffer
-        @test size(mfb.xe) == (M, 3, 2batch)
+        @test size(mfb.xe) == (M, 3, 2*batch)
 
-        xm = QuantumNeuralStates.prepare_input!(na, addrs, mfb.x_cpu)
+        xm = QuantumNeuralStates.prepare_input!(na, addrs, mfb.x)
         QuantumNeuralStates.prepare_chain_input!(na.model, xm, mfb)
         XEm = Array(mfb.xe)
 
-        x = QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)
+        x = QuantumNeuralStates.prepare_input!(na, addrs, na.model.x)
         QuantumNeuralStates.prepare_chain_input!(na.model, x)
         XE = Array(na.model.xe)
 
         @test XEm[:, :, 1:batch] ≈ XE
-
-        # out_main = Array(na.model(QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)))
-        # out_mfb  = Array(na.model(QuantumNeuralStates.prepare_input!(na, addrs, mfb.x_cpu), mfb))
-        # @test out_mfb[:, 1:batch] ≈ out_main
     end
 
     @testset "allocations" begin
@@ -236,22 +233,23 @@ using Random
                       Dense(4=>1, identity; batch=batch); batch=batch)
         na = NeuralAnsatz(LogPsi(), H, model, batch)
 
-        x = QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)    # warm-up
+        x = QuantumNeuralStates.prepare_input!(na, addrs, na.model.x)    # warm-up
         QuantumNeuralStates.prepare_chain_input!(na.model, x)
 
-        @test @allocated(QuantumNeuralStates.prepare_input!(na, addrs, na.x_cpu_buffer)) <= 64
-        @test @allocated(QuantumNeuralStates.encode!(na.model.xe, enc)) <= 256        # launch only
-        @test @allocated(QuantumNeuralStates.prepare_chain_input!(na.model, x)) <= 256
+        limit = 256
+        @test @ballocated(QuantumNeuralStates.prepare_input!($na, $addrs, $(na.model.x))) <= limit
+        @test @ballocated(QuantumNeuralStates.encode!($(na.model.xe), $enc)) <= limit
+        @test @ballocated(QuantumNeuralStates.prepare_chain_input!($(na.model), $x)) <= limit
     end
 
     @testset "1D grid" begin
-        H1  = FroehlichPolaron(BoseFS{missing,8}(); D=1, alpha=1, l=6)
+        H1 = FroehlichPolaron{T}(BoseFS{missing,8}(); D=1, alpha=1, l=6)
         enc = MomentumEncoding((8,), H1)
         @test nchannels(enc) == 2                                              # n, n·k
 
         vac1 = starting_address(H1)
-        a1   = first(filter(a -> sum(onr(a)) == 1, unique(first.(collect(offdiagonals(H1*vac1))))))
-        m1   = findfirst(>(0), onr(a1))
+        a1 = first(filter(a -> sum(onr(a)) == 1, unique(first.(collect(offdiagonals(H1*vac1))))))
+        m1 = findfirst(>(0), onr(a1))
 
         model = Chain(enc,
                       Conv((3,), nchannels(enc)=>4, relu; batch=2, pad=Zeros()),
@@ -260,7 +258,7 @@ using Random
         @test size(model.x) == (8, 2, 2)
 
         na = NeuralAnsatz(LogPsi(), H1, model, 2)
-        x  = QuantumNeuralStates.prepare_input!(na, [vac1, a1], na.x_cpu_buffer)
+        x = QuantumNeuralStates.prepare_input!(na, [vac1, a1], na.model.x)
         QuantumNeuralStates.prepare_chain_input!(na.model, x)
         XE = Array(na.model.xe)
 

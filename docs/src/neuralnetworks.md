@@ -66,11 +66,11 @@ PoolBuffer
 ## Chain
 ```@docs
 Chain
-prepare_chain_input!
 n_params
+prepare_chain_input!
 forward
-LayerNorm
 ln_forward!
+LayerNorm
 MultiForwardBuffer
 ```
 ## Backpropagation
@@ -81,6 +81,7 @@ flatten_jacobian!
 back!
 ln_backward!
 update!
+sync_θ!
 ```
 
 ## Index

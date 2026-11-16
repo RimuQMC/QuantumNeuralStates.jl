@@ -34,33 +34,38 @@ end
     Chain(enc::InputEncoding, layers...; device=identity, batch=1)
 
 A Neural Network (NN) container that chains layers into a single forward-pass
-model. This design is inspired by `Flux.jl` notation.
+model.
 
 # Arguments
-* `enc`: input encoding; defines the input grid and its channels.
-         See [`OccupationEncoding`](@ref), [`MomentumEncoding`](@ref).
-* `layers...`: layers to chain. The first layer must fit the encoding:
-         `Conv` input channels = `nchannels(enc)`, or
-         `Dense` input width   = `nsites(enc) * nchannels(enc)`.
+- `enc`: input encoding, which defines the input grid and its channels. See
+  [`OccupationEncoding`](@ref) and [`MomentumEncoding`](@ref).
+- `layers...`: layers to chain. The first layer must fit the encoding:
+  a `Conv` needs `nchannels(enc)` input channels, and a `Dense` needs
+  `nsites(enc) * nchannels(enc)` inputs.
 
-# Keyword Arguments
-* `device`: function determining whether the NN lives on CPU or GPU.
-* `batch`: batch size.
+# Keywords
+- `device`: moves arrays to the target device (`identity` for CPU, e.g. `cu` for GPU).
+- `batch`: batch size that all buffers are allocated for.
+
+# Fields
+- `layers`: tuple of layers, applied in order.
+- `x`: device input buffer, `(size..., C, batch)` (Conv) or `(M*C, batch)` (Dense).
+- `xe`: same memory as `x`, viewed as `xe[m, c, b]` (site, channel, sample). Used by
+  [`encode!`](@ref).
+- `z_last`: copy of the last output, used to keep one forward pass while running another.
+- `device`, `batch`, `enc`: as in the constructor.
 
 # Example
 ```julia
-enc   = MomentumEncoding((4,4), H; device = device)
+addr = BoseFS{missing, 16}()
+H = FroehlichPolaron{Float32}(addr; D=2)
+enc = MomentumEncoding((4,4), H; device = device)
 model = Chain(enc,
               Conv((3,3), nchannels(enc)=>16, relu; batch=batch, device=device, pad=Zeros()),
               Pool(:mean; device=device),
               Dense(16=>1, identity; batch=batch, device=device);
               batch=batch, device=device)
 ```
-
-## Fields
-* `x` : device input buffer, shape `(size..., C, batch)` (Conv) or `(M*C, batch)` (Dense).
-* `xe`: the same memory viewed as `xe[m, c, b]` (site, channel, sample), used by
-        [`encode!`](@ref).
 
 ## Notes
 Layers are allocation-free at runtime. `z_last` is useful when two forward passes
@@ -78,12 +83,12 @@ mutable struct Chain{L<:Tuple,X<:AbstractArray,XE<:AbstractArray,U<:AbstractArra
     enc::E
 end
 function Chain(enc::InputEncoding, layers...; device::Function = identity, batch::Int = 1)
-    l  = first(layers)
-    x  = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
+    l = first(layers)
+    x = fill!(similar(l.W, _input_shape(l, enc, batch)...), 0f0)
     xe = reshape(x, nsites(enc), nchannels(enc), batch)       # same memory, [m, c, b]
     _check_device(enc, x)
 
-    z_out  = _forward_layers(layers, x)       # forward pass for all layers initialisation
+    z_out = _forward_layers(layers, x)       # forward pass for all layers initialisation
     z_last = similar(z_out)
 
     L, X, XE, U, F, E = typeof(layers), typeof(x), typeof(xe), typeof(z_last),
@@ -131,13 +136,10 @@ batch size `buffer_size` and the same input encoding as `model`.
 
 # Example
 Recommended way to choose `buffer_size`:
-julia> addr = OccupationNumberFS{4}()
+julia> addr = BoseFS{missing, 4}()
 julia> H = FroehlichPolaron(addr)
-julia> col = H*addr
-julia> num_offdiagonals(col)
+julia> num_offdiagonals(H)
 8
-A good value is `num_offdiagonals(col) + 10%`, so that all off-diagonals need
-only one forward pass.
 """
 mutable struct MultiForwardBuffer{L,A,X<:AbstractArray,XE<:AbstractArray,
                                   CX<:AbstractArray,CZ<:AbstractArray}
@@ -163,9 +165,9 @@ function MultiForwardBuffer(model, addr, buffer_size)
         ) for l in model.layers
     )
 
-    enc   = model.enc
-    x     = fill!(similar(model.x, size(model.x)[1:end-1]..., buffer_size), 0f0)
-    xe    = reshape(x, nsites(enc), nchannels(enc), buffer_size)
+    enc = model.enc
+    x = fill!(similar(model.x, size(model.x)[1:end-1]..., buffer_size), 0f0)
+    xe = reshape(x, nsites(enc), nchannels(enc), buffer_size)
     x_cpu = zeros(Float32, size(model.x)[1:end-1]..., buffer_size)
     z_cpu = Matrix{Float64}(undef, size(last(model.layers).z, 1), buffer_size)
 
@@ -188,23 +190,28 @@ If dispatched with [`MultiForwardBuffer`](@ref), it loads into that buffer
 instead, for bigger batched passes.
 """
 function prepare_chain_input!(chain::Chain, x::AbstractArray)
-    size(x) == size(chain.x) ||
-        error("input has size $(size(x)), model expects $(size(chain.x))")
-    copyto!(chain.x, x)
+    if x !== chain.x                                    # external input: copy it in
+        size(x) == size(chain.x) ||
+            error("input has size $(size(x)), model expects $(size(chain.x))")
+        copyto!(chain.x, x)
+    end
     encode!(chain.xe, chain.enc)
     return chain.x
 end
+
 function prepare_chain_input!(chain::Chain, x::AbstractArray, multi_forward_buffer)
-    size(x) == size(multi_forward_buffer.x) ||
-        error("input has size $(size(x)), buffer expects $(size(multi_forward_buffer.x))")
-    copyto!(multi_forward_buffer.x, x)
+    if x !== multi_forward_buffer.x                     # external input: copy it in
+        size(x) == size(multi_forward_buffer.x) ||
+            error("input has size $(size(x)), buffer expects $(size(multi_forward_buffer.x))")
+        copyto!(multi_forward_buffer.x, x)
+    end
     encode!(multi_forward_buffer.xe, chain.enc)
     return multi_forward_buffer.x
 end
 
 """
-    forward(chain, x)
-    forward(chain, x, multi_forward_buffer)
+    forward(chain::Chain, x)
+    forward(chain::Chain, x, multi_forward_buffer)
 
 Forward pass through all layers of the Neural Network. The input is loaded into 
 model by [`prepare_chain_input!`](@ref) and returns final Neural Network output. 
@@ -230,7 +237,7 @@ end
                     forward(first(layers), x, first(multi)))
 
 """
-    (model)(x)
+    (model::Chain)(x)
 
 Wrapper over [`forward`](@ref) function for maybe simplier calling of Neural Network
 forward pass.
