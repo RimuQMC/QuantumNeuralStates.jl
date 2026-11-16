@@ -11,6 +11,7 @@ using KernelAbstractions
 using Atomix
 using GPUArraysCore: @allowscalar
 using SpecialFunctions: loggamma
+using Plots
 
 const PACKAGE_NAME = "QuantumNeuralStates"
 
@@ -68,7 +69,8 @@ include("./ansatz/rimu_importance_sampling.jl")
 
 # VMC
 include("./vmc/vmc_helpers.jl")
-export VMCBuffer
+export VMCBuffer, collect_offdiagonals!
+export ctmc_state_proposal!, get_ctmc_weights!, metropolis_state_proposal!, metropolis_count_ratio!
 include("./vmc/local_energy.jl")
 export calculate_local_energy!
 include("./vmc/metropolis.jl")
@@ -103,10 +105,11 @@ export nchannels, nsites, NoEncoding, OccupationEncoding, MomentumEncoding
 export Chain, Dense, Conv, Pool
 export NoPad, Periodic, Zeros # padding structs
 export JacobianBuffer, make_buffers, back_jacobian!, back!
-export forward, back_jacobian!, update!, addrs_random, final_elocs_statistics!
+export forward, update!
 export neuron_statistics, jacobian_statistics
 export save_master, load_master, log_markov_chain
-export memory_estimate, select_device, sync_θ!
+export memory_estimate, select_device, sync_θ!, addrs_random
+export GPUGrowRowBuffer, GPUGrowColumnBuffer
 
 export tanh, relu, sigmoid, gelu, tanh_fast, sigmoid_fast, identity, gelu_fast
 export tanh_deriv, relu_deriv, sigmoid_deriv, identity_deriv, tanh_fast_deriv, sigmoid_fast_deriv, gelu_deriv, gelu_fast_deriv

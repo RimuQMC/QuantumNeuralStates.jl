@@ -182,7 +182,7 @@ function parse_encoding(line::AbstractString)
 end
 
 """
-    load_master(ansatz, filename::String) -> x
+    load_master(ansatz, filename::String) -> (x, grid_changed)
 
 Load a saved model — written by [`save_master`](@ref) — into `ansatz`,
 after verifying it's compatible with the saved one (architecture, 

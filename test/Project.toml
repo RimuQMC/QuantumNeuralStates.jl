@@ -1,6 +1,7 @@
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 Gutzwiller = "934a285b-0f55-4204-bc81-2542b947ab7d"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

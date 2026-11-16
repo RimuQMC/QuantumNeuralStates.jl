@@ -16,9 +16,9 @@ PoolBuffer(::Pool, x::AbstractArray) = PoolBuffer(similar(x))
 Base.show(io::IO, ::MIME"text/plain", ::PoolBuffer) = print(io, "PoolBuffer")
 
 """
-    make_buffer(l::Pool, x) -> PoolBuffer
+    make_buffer(layer::Pool, x) -> PoolBuffer
 
-Build the [`PoolBuffer`](@ref) for `l`, sized from `x`.
+Build the [`PoolBuffer`](@ref) for `layer::Pool`, sized from `x`.
 """
 make_buffer(l::Pool, x) = PoolBuffer(l, x)
 

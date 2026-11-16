@@ -1,35 +1,63 @@
 
 """
     run_training_loop(H, ansatz, addr, phases; kwargs...)
-            -> E_history, E_err_history, var_history, final_addrs
+        -> E_history, E_err_history, var_history, final_addrs
 
-Run training through a sequence of TrainingPhase's. Each phase starts when 
-the previous one converges (or hits `max_epochs`).
+Train `ansatz` with VMC through a sequence of [`TrainingPhase`](@ref)s. Each phase
+runs until its stopping criterion is met or it reaches `max_epochs`, and the next phase
+then continues from the current parameters and walker positions. After the last phase,
+the parameters are optionally saved, and an unbiased final energy estimate is computed
+with [`final_elocs_statistics!`](@ref).
 
-# Variables
-* `H`: hamiltonian defined in Rimu.
-* `ansatz`: ansatz that evaluates wave-function. See [`NeuralAnsatz`](@ref).
-* `addr`: Rimu stype of Fock address also used in `H` definition.
-* `phases`: details of each phase are saved in [`TrainingPhase`](@ref) and they 
-        can be stuck as: `phases = [TrainingPhase(), TrainingPhase(), ...]`.
+# Initial walkers
+The batch of `B = ansatz.model.batch` walkers is initialised in one of two ways:
+* **Loaded:** if `load = true` and `loadfile` exists, the walkers stored by
+  [`save_master`](@ref) are reused, provided the truncation grid is unchanged and the
+  stored batch size equals `B`.
+* **Random (otherwise):** the walkers are generated with [`addrs_random`](@ref) from
+  `addr`. Only modes that are both coupled by `H` (see [`coupled_modes`](@ref)) and
+  kept by the truncation of `ansatz` are populated, with at most `n_max = 3` particles
+  per mode.
+
+# Arguments
+* `H`: Hamiltonian defined in Rimu.
+* `ansatz`: wave-function ansatz, see [`NeuralAnsatz`](@ref).
+* `addr`: Rimu Fock address, the same type as used in the definition of `H`. It serves
+  as the template for the random initial walkers.
+* `phases`: `Vector{TrainingPhase}` run in order,
+  e.g. `phases = [TrainingPhase(...), TrainingPhase(...)]`, see [`TrainingPhase`](@ref).
 
 # Keyword Arguments
-* `savefile`: name of file where parameters of [`NeuralAnsatz`](@ref) are saved.
-        See also [`save_master`](@ref). (default `weights.txt`)
-* `loadfile`: name of file from which parameters are loaded to [`NeuralAnsatz`](@ref).
-        See also [`load_master`](@ref). (default `weights.txt`)
-* `save`: boolean value if I want to save parameters at the end of training loop
-        (default `true`).
-* `load`: boolean value if I want to load saved parameters and weights for the 
-        training loop (default `false`).
-* `markovfile`: name of file where all Markov Chains of the training loop are
-        saved. This is meant for diagnostics only as the number of Markov
-        Chains can be enourmous (default `MarkovChain.txt`).
-* `markov`: boolean value if I want to save the Markov Chains (default `false`).
+* `savefile`: file to which the neural network parameters and final walkers are saved,
+  see [`save_master`](@ref) (default `"weights.txt"`).
+* `loadfile`: file from which parameters and walkers are loaded,
+  see [`load_master`](@ref) (default `"weights.txt"`).
+* `save`: if `true`, save the parameters at the end of training (default `true`).
+* `load`: if `true`, load parameters and walkers from `loadfile` before training
+  (default `false`).
+* `occplot`: if `true`, plot the occupation statistics of the final estimate
+  (default `false`).
+* `occfile`: file name for the occupation plots (default `"occupation.pdf"`).
+* `markov`: if `true`, log the walker addresses after every epoch (default `false`).
+* `markovfile`: file for the Markov-chain log. Meant for diagnostics only, as the file
+  can become very large, very quickly (default `"MarkovChain.txt"`).
+
+# Returns
+* `E_history`: block-averaged energies of all phases.
+* `E_err_history`: per-block error estimates (without autocorrelation analysis).
+* `var_history`: block-averaged local-energy variances.
+* `final_addrs`: final walker addresses on the device of `ansatz`.
+
+# Notes
+* All histories are chained over phases, one entry per block of `block_size` epochs.
+* Training uses clipped local energies. The final estimate is unclipped and comes with a
+  blocking-analysis error bar, which is the reliable one. It is printed but not returned.
+* Neuron and Jacobian statistics, if enabled in `ansatz`, are collected once per block.
 """
 function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                            savefile::String = "weights.txt", loadfile::String = "weights.txt",
                            save::Bool = true, load::Bool = false,
+                           occfile::String = "occupation.png", occplot::Bool=false,
                            markovfile::String = "MarkovChain.txt" , markov::Bool = false)
 
     @info "Hilbert space dimension: $(@sprintf("%.3e", dimension(H)))"
@@ -40,13 +68,18 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
         if !grid_change && size(x, 2) == ansatz.model.batch
             [typeof(addr)(Tuple(col)) for col in eachcol(x)]
         else
-            fill(addr, ansatz.model.batch) # fill whole batch with same starting address
+            # fill(addr, ansatz.model.batch) # fill whole batch with same starting address
+            coupled = coupled_modes(H, addr)
+            truncated = ansatz.truncation === nothing ? (1:num_modes(addr)) : ansatz.truncation.keep
+            active_range = intersect(truncated, coupled)
+            addrs_random(H, addr, ansatz.model.batch; active = active_range, n_max=3)
         end
     else
-        # addrs_random(H, addr, steps)
-        fill(addr, ansatz.model.batch) # fill whole batch with same starting address
-        # this is prefered as the neural network randomly sample anyway at the 
-        # beginning and also it is necessary for input truncation to work
+        coupled = coupled_modes(H, addr)
+        truncated = ansatz.truncation === nothing ? (1:num_modes(addr)) : ansatz.truncation.keep
+        active_range = intersect(truncated, coupled)
+        addrs_random(H, addr, ansatz.model.batch; active = active_range, n_max=3)
+        # fill(addr, ansatz.model.batch) # fill whole batch with same starting address
     end
     backend = KernelAbstractions.get_backend(ansatz.model.x)
     addrs_n = KernelAbstractions.allocate(backend, eltype(addrs), ansatz.model.batch)
@@ -196,6 +229,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
                         isnan(diff_E) ? 0.0 : diff_E,
                         isnan(diff_var) ? 0.0 : diff_var,
                         last_accept, eta_sum/phase.block_size)
+                flush(stdout)
+                flush(stderr)
                 eta_sum = 0f0
 
                 # if vmc_buf.block_idx >= phase.block_min
@@ -226,7 +261,8 @@ function run_training_loop(H, ansatz, addr, phases::Vector{TrainingPhase};
     end
 
     # final VMC energy estimate of trained NN 
-    final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz)
+    final_elocs_statistics!(last(phases).vmc_sampler, vmc_buf, jac_buf, H, addrs_n, ansatz;
+                            occ_file=occfile, plot_occ=occplot)
     
     return all_E, all_E_err, all_var, addrs_n
 end

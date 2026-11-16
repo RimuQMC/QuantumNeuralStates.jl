@@ -37,7 +37,6 @@ input vector of addresses `source` and computes ansatz values.
 The result is hold in dictionary `ansatz.result_dict`.
 
 # Variables
-
 * `source`: `Rimu.PDVec` or `Rimu.DVec` type holding addresses.
 * `ansatz`: [`NeuralAnsatz`](@ref).
 
@@ -98,12 +97,10 @@ It edits walker values in `target` which are saved in first column of `working_m
 (see Rimu documentation).
 
 # Variables
-
 * `working_memory`: Rimu type of structure.
 * `ansatz`: [`NeuralAnsatz`](@ref).
 * `adj`: Boolean variable which control if Adjoint version of hamiltonian was applied.
     If so, the Importance Sampling ratio should be inversed.
-
 """
 function _ansatz_modify_new!(working_memory, ansatz, adj)
 
@@ -175,7 +172,7 @@ end
     Rimu.Interfaces.apply_operator!(compression, working_memory, target, source, ham, boost)
 
 This is custom dispatch function for calling the [`NeuralAnsatz`](@ref) Importance Sampling (IS)
-methods in Rimu. It applies IS ratio in two steps for batch approaches. Firstly, it applies
+method in Rimu. It applies IS ratio in two steps for batch approach. Firstly, it applies
 `*1/ψ_source` factor in spawning step. After spawning step all new `target` addresses are known. 
 Secondly, it applies `*ψ_target` factor for `target` and thus compliting the IS ratio.
 """

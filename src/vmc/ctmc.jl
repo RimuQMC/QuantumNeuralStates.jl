@@ -1,23 +1,55 @@
 # using KernelAbstractions
 
 """
-    ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+    ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz; eclamp=true)
         -> new_addrs, E_locs, weights, grads_n, acc
 
-VMC sampler using Continous Time Monte Carlo algorithm (CTMC). New addresses are proposed
-from offdiagonal. This algorithm always accept some new proposed state and
-introduce so called `residence time`, which represent `weights` of how long the walker 
-effectively stays on a configuration before jumping. Also see [`get_ctmc_weights!`](@ref).
+Perform one step of the lazy Continuous-Time Monte Carlo (CTMC) sampler for VMC.
 
-# Variables
+For each walker `n` in the batch, new configurations are proposed only among its
+off-diagonal connections ``m`` with ``H_{nm} \\neq 0`` (optionally restricted by the
+truncation mask of `ansatz`). The target `m` is selected according to jump rates
+built from the wave-function amplitudes `log|ψ(m)|`.
 
-* `vmc_buf`: [`VMCBuffer`](@ref) intermediate variables for allocation-free calculations.
-* `jacobian_buf`: [`JacobianBuffer`](@ref) used during calculation of pre-sample jacobians.
-* `hamiltonian`: hamiltonian defined in Rimu.
-* `addrs_n`: current sample addresses (of batch size).
-* `ansatz`: ansatz for wave-function evaluation. See [`NeuralAnsatz`](@ref).
+In CTMC, a walker always jumps to the proposed state. To compensate, each sample
+carries a *residence time*: the `weight` describing how long the walker effectively
+stays on configuration `n` before jumping. See [`get_ctmc_weights!`](@ref).
+
+# Lazy chain
+A pure jump chain can be periodic. For example, with particle-number or bipartite
+structure it can alternate between two sublattices forever, which breaks ergodicity
+of the Markov chain. To make the chain aperiodic, the sampler is *lazy*: each walker
+moves to its proposed state with probability `0.75` and stays at `n` with
+probability `0.25`. The stationary distribution is unchanged.
+
+# Arguments
+* `vmc_buf`: [`VMCBuffer`](@ref) holding intermediate variables for allocation-free
+  calculations.
+* `jacobian_buf`: [`JacobianBuffer`](@ref) used to compute the per-sample Jacobians.
+* `hamiltonian`: Hamiltonian defined in Rimu.
+* `addrs_n`: current walker addresses (length = batch size `B`). Updated in place.
+* `ansatz`: wave-function ansatz, see [`NeuralAnsatz`](@ref).
+
+# Keywords
+* `eclamp::Bool=true`: clip outlying local energies, see
+  [`calculate_local_energy!`](@ref) and [`elocs_clamping!`](@ref).
+
+# Returns
+* `new_addrs`: `(B,)` next walker positions (the same array as `addrs_n`).
+* `E_locs`: `(B,)` local energies of the configurations `n`.
+* `weights`: `(B,)` CTMC residence-time weights.
+* `grads_n`: `(p, B)` per-sample gradients of `log ψ(n)`, or `nothing` if `vmc_buf.start`
+  is `false`.
+* `acc`: fraction of walkers that moved, in `[0, 1]`.
+
+All arrays live on the same device (CPU/GPU) as the inputs.
+
+## Note
+When `vmc_buf.start` is `false` (e.g. during burn-in), only the walkers are advanced.
+In that case `E_locs` and `weights` are **not** computed, and their contents are
+meaningless.
 """
-function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz; eclamp::Bool=true)
     B = length(addrs_n) # batch 
 
     # --- STEP 0: all needed variables from buffer ---------------------------------
@@ -70,7 +102,7 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
             ansatz.meanfield(addrs_n, n_logψ)    # MF on original addresses
         end
 
-        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign) # saved in E_locs
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign; eclamp=eclamp) # saved in E_locs
         get_ctmc_weights!(weights, m_logψ, offsets, n_logψ) # saved in weights
     end
 
@@ -84,7 +116,7 @@ function ctmc_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # E_locs:    (B,) local energies        -> CPU/GPU
     # weights:   (B,) sampler weights       -> CPU/GPU
     # grads_n:   (p,B) gradients            -> CPU/GPU
-    # acc:       acceptance over batch input (in %)
+    # acc:       acceptance over batch input ([0,1] -> 0.75 = 75%)
     return new_addrs, E_locs, weights, grads_n, acc
 end
 

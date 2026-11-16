@@ -55,7 +55,6 @@ Two storages live side by side:
     after the reverse pass. This is the array consumed downstream by optimisers.
 
 # Arguments
-
 * `ansatz`: [`NeuralAnsatz`](@ref) that holds Neural Network structure. See [`Chain`](@ref)
 * `buffers`: Buffers holdin each layers input/output gradients. See in [`DenseBuffer`](@ref),
     [`ConvBuffer`](@ref), [`PoolBuffer`](@ref).
@@ -128,15 +127,6 @@ function JacobianBuffer(ansatz, buffers::Tuple)
     J = similar(refW, p, batch)
     θ = similar(refb, p)
     foreach((layer, r) -> _get_params!(θ, layer, r), chain.layers, rs)
-    # for (layer, r) in zip(chain.layers, rs)
-    #     hasparams(layer) || continue
-    #     view(θ, r.W) .= reshape(layer.W, :)
-    #     view(θ, r.b) .= layer.b
-    #     if !isnothing(r.γ)
-    #         view(θ, r.γ) .= reshape(layer.layer_norm.γ, :)
-    #         view(θ, r.β) .= reshape(layer.layer_norm.β, :)
-    #     end
-    # end
 
     δ_init = similar(last(ansatz.model.layers).z)
     fill!(δ_init, one(eltype(δ_init)))
@@ -174,7 +164,8 @@ end
 
 Assemble the per-layer gradients stored in `jac.J_layers` (and `jac.ln_zipped`
 for any LayerNorm layers) into the flat Jacobian `jac.J`, using the ranges in
-`jac.ranges`. Parameter-free layers (e.g. `Pool`) are skipped. See [`JacobianBuffer`](@ref).
+`jac.ranges` and [`_flatten!`](@ref)funciton. Parameter-free layers (e.g. `Pool`) 
+are skipped. See [`JacobianBuffer`](@ref).
 """
 function flatten_jacobian!(jac::JacobianBuffer)
     batch = size(jac.J, 2)

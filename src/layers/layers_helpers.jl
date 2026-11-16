@@ -108,7 +108,6 @@ This struct mimic each [`Chain`](@ref) layer output variables made for customize
 forward passes. See also [`MultiForwardBuffer`](@ref).
 
 # Arguments
-
 * `a`: is buffer for pre-actiovation and post-activation variable in each Chain layer.
 * `layer_norm`: is buffer for layer normalisation struct with new batch size. 
 """

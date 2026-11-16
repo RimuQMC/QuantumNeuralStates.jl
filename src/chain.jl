@@ -34,18 +34,26 @@ end
     Chain(enc::InputEncoding, layers...; device=identity, batch=1)
 
 A Neural Network (NN) container that chains layers into a single forward-pass
-model. This design is inspired by `Flux.jl` notation.
+model.
 
 # Arguments
-* `enc`: input encoding; defines the input grid and its channels.
-         See [`OccupationEncoding`](@ref), [`MomentumEncoding`](@ref).
-* `layers...`: layers to chain. The first layer must fit the encoding:
-         `Conv` input channels = `nchannels(enc)`, or
-         `Dense` input width   = `nsites(enc) * nchannels(enc)`.
+- `enc`: input encoding, which defines the input grid and its channels. See
+  [`OccupationEncoding`](@ref) and [`MomentumEncoding`](@ref).
+- `layers...`: layers to chain. The first layer must fit the encoding:
+  a `Conv` needs `nchannels(enc)` input channels, and a `Dense` needs
+  `nsites(enc) * nchannels(enc)` inputs.
 
-# Keyword Arguments
-* `device`: function determining whether the NN lives on CPU or GPU.
-* `batch`: batch size.
+# Keywords
+- `device`: moves arrays to the target device (`identity` for CPU, e.g. `cu` for GPU).
+- `batch`: batch size that all buffers are allocated for.
+
+# Fields
+- `layers`: tuple of layers, applied in order.
+- `x`: device input buffer, `(size..., C, batch)` (Conv) or `(M*C, batch)` (Dense).
+- `xe`: same memory as `x`, viewed as `xe[m, c, b]` (site, channel, sample). Used by
+  [`encode!`](@ref).
+- `z_last`: copy of the last output, used to keep one forward pass while running another.
+- `device`, `batch`, `enc`: as in the constructor.
 
 # Example
 ```julia
@@ -58,11 +66,6 @@ model = Chain(enc,
               Dense(16=>1, identity; batch=batch, device=device);
               batch=batch, device=device)
 ```
-
-## Fields
-* `x` : device input buffer, shape `(size..., C, batch)` (Conv) or `(M*C, batch)` (Dense).
-* `xe`: the same memory viewed as `xe[m, c, b]` (site, channel, sample), used by
-        [`encode!`](@ref).
 
 ## Notes
 Layers are allocation-free at runtime. `z_last` is useful when two forward passes
@@ -207,8 +210,8 @@ function prepare_chain_input!(chain::Chain, x::AbstractArray, multi_forward_buff
 end
 
 """
-    forward(chain, x)
-    forward(chain, x, multi_forward_buffer)
+    forward(chain::Chain, x)
+    forward(chain::Chain, x, multi_forward_buffer)
 
 Forward pass through all layers of the Neural Network. The input is loaded into 
 model by [`prepare_chain_input!`](@ref) and returns final Neural Network output. 
@@ -234,7 +237,7 @@ end
                     forward(first(layers), x, first(multi)))
 
 """
-    (model)(x)
+    (model::Chain)(x)
 
 Wrapper over [`forward`](@ref) function for maybe simplier calling of Neural Network
 forward pass.

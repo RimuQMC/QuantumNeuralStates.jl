@@ -114,27 +114,27 @@ function sync_θ!(jac::JacobianBuffer, ansatz)
 end
 
 """
-    addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max = 10)
+    addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max = 3)
 
-`batch` random addresses with occupations between 0 and `n_max` per mode, only on the
-`active` modes (all others stay 0, e.g. truncated sites).
+`batch` random addresses, only on the `active` modes (all others stay 0, e.g.
+truncated sites).
 
 * Hamiltonian with `mode_cutoff` (no fixed particle number): each active mode gets an
   independent occupation from `0:min(n_max, mode_cutoff)`.
 * Otherwise (fixed particle number N = num_particles(addr)): the N particles are placed
-  one at a time on random active modes with fewer than `n_max` particles.
+  one at a time on random active modes, each holding at most `cld(N, length(active))`
+  particles (the average occupation, rounded up). `n_max` is not used here.
 """
-function addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max::Int = 10)
+function addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max::Int = 3)
     M = num_modes(addr)
     fixed_N = !hasproperty(ham, :mode_cutoff)
-    tmp   = Vector{Int}(undef, M)
+    tmp = Vector{Int}(undef, M)
     addrs = Vector{typeof(addr)}(undef, batch)
 
-    if fixed_N
+    if fixed_N  # conserving number of particles
         N = num_particles(addr)
-        N <= n_max * length(active) ||
-            throw(ArgumentError("cannot place $N particles on $(length(active)) modes with n_max = $n_max"))
-    else
+        n_cap = cld(N, length(active))
+    else        # not bounded number of particles
         n_top = min(n_max, ham.mode_cutoff)
     end
 
@@ -143,7 +143,7 @@ function addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max::Int =
         if fixed_N
             for _ in 1:N                             # one particle at a time
                 m = rand(active)
-                while tmp[m] >= n_max                # mode full → pick another
+                while tmp[m] >= n_cap                # mode full → pick another
                     m = rand(active)
                 end
                 tmp[m] += 1
@@ -153,16 +153,19 @@ function addrs_random(ham, addr, batch; active = 1:num_modes(addr), n_max::Int =
                 tmp[m] = rand(0:n_top)               # independent, 0 … n_max
             end
         end
-        addrs[i] = typeof(addr)(tmp)
+        addrs[i] = typeof(addr)(Tuple(tmp))
     end
     return addrs
 end
 
 """
     final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
-                            n_iter = 100, n_skip = 5, burnin = 50) -> res
+                            n_iter=100, n_skip=5, burnin=50,
+                            plot_occ=true, occ_file="occupation.png")
+        -> res, N_all, counts, n_mode
 
-Estimate the variational energy of the trained [`NeuralAnsatz`](@ref) with an error bar.
+Estimate the variational energy of the trained [`NeuralAnsatz`](@ref) with an error bar,
+and record the occupation statistics of the sampled walkers.
 Run at the end of [`run_training_loop`](@ref).
 
 Starting from the last walker addresses `addrs` of the training loop, the sampler is first
@@ -170,67 +173,149 @@ re-equilibrated for `burnin` steps. It then records `n_iter` measurements, separ
 `n_skip` sampler steps each. Every measurement is the weighted batch mean
 
 ```math
-E_t = \\sum_{b=1}^{B} w_b\\, E_{\\mathrm{loc}}(n_b) ,
+E_t = \\sum_{b=1}^{B} w_b\\, E_{\\mathrm{loc}}(n_b), \\qquad \\sum_{b=1}^{B} w_b = 1,
 ```
 
 and the time series ``E_t`` is analysed with `Rimu.blocking_analysis`, which accounts for
-the autocorrelation between measurements. In total `n_iter * batch` local energies are used.
+the autocorrelation between measurements. In total `n_iter * B` local energies are used.
+
+Local energies are **never clipped** here (`eclamp=false`), so the estimate is unbiased.
 
 # Arguments
 * `vmc_sampler`: sampler type, `:metropolis` or `:ctmc`, see [`vmc_sample!`](@ref).
 * `vmc_buf`: VMC buffers, see [`VMCBuffer`](@ref).
 * `jac_buf`: Jacobian buffer, see [`JacobianBuffer`](@ref).
 * `H`: Rimu Hamiltonian.
-* `addrs`: walker addresses at the end of training.
+* `addrs`: walker addresses at the end of training. **Updated in place.**
 * `ansatz`: the trained [`NeuralAnsatz`](@ref).
 
 # Keyword Arguments
 * `n_iter`: number of measurements (default `100`).
-* `n_skip`: sampler steps per measurement; `n_skip - 1` steps without measurement are made
-    in between to reduce correlations (default `5`).
+* `n_skip`: sampler steps per measurement. The `n_skip - 1` steps in between are made
+  without measuring, to reduce correlations. `n_skip ≤ 1` measures every step
+  (default `5`).
 * `burnin`: re-equilibration steps before the first measurement (default `50`).
+* `plot_occ`: if `true`, plot the occupation statistics (default `true`).
+* `occ_file`: file name for the occupation plots (default `"occupation.pdf"`).
 
 # Returns
 * `res`: result of `Rimu.blocking_analysis`, with the mean energy and its error estimate.
+* `N_all`: total occupation `N` of every measured walker sample (`n_iter * B` entries).
+* `counts`: `Dict{Int, Int}` with the number of walker samples for each total occupation `N`.
+* `n_mode`: `(M,)` average occupation of each mode over all walker samples.
 
 # Notes
 * The error bar from the blocking analysis is the reliable one. The `E_err` printed during
-    training is computed per block without this correlation analysis and can be too small.
+  training is computed per block without this correlation analysis and can be too small.
+* If `plot_occ = true`, two bar plots are saved to `occ_file`: the number of walker
+  samples per total occupation `N` (log scale) and the average occupation per mode.
 * The mean-field, if present in `ansatz`, is included automatically through the samplers.
+* `ansatz.neuron_statistics` and `ansatz.jacobian_statistics` are set to `false` and
+  are not restored.
+* With few measurements (small `n_iter`), the blocking analysis may not converge. Increase
+  `n_iter` if `res` reports this.
 """
 function final_elocs_statistics!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz;
-                                 n_iter = 100, n_skip = 5, burnin = 50)
+                                 n_iter = 100, n_skip = 5, burnin = 50,
+                                 plot_occ = true, occ_file = "occupation.pdf")
     ansatz.neuron_statistics = false
     ansatz.jacobian_statistics = false
 
     # re-equilibrate after the last parameter update
     vmc_buf.start = false
     for _ in 1:burnin
-        addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+        addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; eclamp=false)
     end
 
-    E_t = Vector{Float64}(undef, n_iter)        # time series of weighted batch means
+    E_t = Vector{Float64}(undef, n_iter)    # time series of weighted batch means
+    M = num_modes(first(Array(addrs)))
+    N_all = Int[]                           # raw total occupation of every walker sample
+    n_mode = zeros(Float64, M)              # summed occupation per mode
+    sizehint!(N_all, n_iter * ansatz.model.batch)
 
     for t in 1:n_iter
         # decorrelating steps (no E_loc)
         vmc_buf.start = false
         for _ in 1:(n_skip - 1)
-            addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+            addrs, = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; eclamp=false)
         end
 
         # measurement step
         vmc_buf.start = true
-        addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz)
+
+        # occupations of every walker (addresses copied to the CPU)
+        for ad in Array(addrs)
+            o = onr(ad)
+            push!(N_all, sum(o))
+            for k in 1:M
+                n_mode[k] += o[k]
+            end
+        end
+
+        addrs, E_locs, weights, _, _ = vmc_sample!(vmc_sampler, vmc_buf, jac_buf, H, addrs, ansatz; 
+                                                   eclamp=false)
 
         e = Float64.(Array(E_locs))
         w = Float64.(Array(weights))
         E_t[t] = sum(w .* e)    # weights already normalized
     end
+    n_mode ./= length(N_all)                    # average over all walker samples
 
     res = Rimu.blocking_analysis(E_t)
     println("\nFinal VMC estimate: $n_iter measurements × $(ansatz.model.batch) walkers, every $n_skip steps")
     println(res)
-    return res
+
+    # raw counts per total occupation N
+    counts = Dict{Int, Int}()
+    for N in N_all
+        counts[N] = get(counts, N, 0) + 1
+    end
+    N_vals = sort!(collect(keys(counts)))
+    println("total occupation: mean = $(sum(N_all) / length(N_all)),  ",
+            "min = $(first(N_vals)),  max = $(last(N_vals)),  samples = $(length(N_all))")
+    k_max = argmax(n_mode)
+    println("per mode: largest average = $(n_mode[k_max]) in mode $k_max,  ",
+            "smallest = $(minimum(n_mode))")
+
+    if plot_occ
+        p1 = bar(N_vals, [counts[N] for N in N_vals]; yscale = :log10, label = "",
+                 xlabel = "total occupation N", ylabel = "walker samples",
+                 title = "total occupation ($(length(N_all)) samples)")
+        p2 = bar(1:M, n_mode; label = "",
+                 xlabel = "mode k", ylabel = "average occupation ⟨n_k⟩",
+                 title = "average occupation per mode", xticks = 1:M)
+        p = plot(p1, p2; layout = (2, 1), size = (750, 700))
+        savefig(p, occ_file)
+        println("occupation plots saved to $occ_file")
+    end
+
+    return res, N_all, counts, n_mode
+end
+
+"""
+    coupled_modes(H, addr) -> Vector{Int}
+
+Modes whose occupation `H` can change from the configuration `addr`: every mode that
+some off-diagonal move with a non-zero, finite matrix element acts on. Modes outside
+this set have a conserved occupation from `addr`, e.g. the k = 0 phonon of the
+Froehlich model, and must stay empty in random starts.
+
+# Return
+Vector of allowed indices in address modes.
+"""
+function coupled_modes(H, addr)
+    M = num_modes(addr)
+    coupled = falses(M)
+    col = H * addr
+    o0 = onr(addr)
+    for (a, v) in offdiagonals(col)
+        (iszero(v) || !isfinite(v)) && continue
+        o = onr(a)
+        for m in 1:M
+            o[m] != o0[m] && (coupled[m] = true)     # this move created a particle in m
+        end
+    end
+    return findall(coupled)
 end
 
 """ 

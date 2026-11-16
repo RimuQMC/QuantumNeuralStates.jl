@@ -58,8 +58,8 @@ _signature(::Pool{T,A,O}) where {T,A,O} = "Pool($O)"
     forward(layer::Pool, x::AbstractArray) -> layer.z
 
 Forward pass through a [`Pool`](@ref) layer. It calculates the forward pass
-in-place of the `Pool` structure and returns its layer output. It utilise
-`@kernel` call function that automatically runs on `Pool` device.
+in-place of the `Pool` structure and returns its layer output. It launches
+kernel function that runs the forward pass, see [`_pool_forward_kernel!`](@ref).
 
 On the first call, the buffer `layer.z` is allocated with shape `(C, batch)`.
 All subsequent calls are allocation-free.

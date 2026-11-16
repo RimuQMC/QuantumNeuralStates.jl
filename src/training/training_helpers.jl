@@ -46,10 +46,9 @@ It is define either as `Float64`, value for chosen condition, or as
 set to `nothing`.
 
 # Note
-
 Special field is `require_all`, boolean. If `true` then all chosen 
 conditions needs to be fulfilled before stop condition is triggered.
-If `false` than stop condition is triggered when any condition is 
+If `false` then stop condition is triggered when any condition is 
 fulfilled.
 
 # Example
@@ -120,7 +119,6 @@ One stage of training. This structure allows to define more training phases
 with different parameters.
 
 # Variables
-
 * `mode`: define used loss function (and its gradients), see [`apply_loss!`](@ref) 
         (default `:energy`).
 * `optimiser`: define what optimiser is used for parameters update 
@@ -139,7 +137,7 @@ with different parameters.
         `d_loose` is set to `d_tight`, see [`minSRBuffer`](@ref).
 * `ρ`: maximal relative weight change `η‖Δθ‖/‖θ‖` per step of [`minSR`](@ref)
         (default `0.05f0`). During a drop of the Jacobian scale `s` it is tightened to
-        `0.1 ρ`, see [`minSRBuffer`](@ref).
+        `0.1*ρ`, see [`minSRBuffer`](@ref).
 * `skip`: define how many VMC steps should be skip/burned before parameters update is made.
         Thermalisation of VMC sampler (default `(1, 100)`). Multiple options can be 
         stuck in Tuple of form `(epoch, burnin)` - which means from epoch number 

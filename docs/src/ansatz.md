@@ -13,6 +13,7 @@ LogPsiSignTanh
 psi!
 log_psi!
 init_gradient_seed!
+set_centering!
 ```
 ## Neural Ansatz
 ```@docs
@@ -26,7 +27,6 @@ SCALE_FUNCTIONS
 
 prepare_input!
 compute_logψ
-compute_ψ_64
 multi_compute_logψ!
 
 neuron_statistics

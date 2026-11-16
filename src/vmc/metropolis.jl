@@ -1,26 +1,57 @@
 
 """
-    metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+    metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz; eclamp=true)
         -> new_addrs, E_locs, weights, grads_n, acc
 
-VMC sampler using Metropolis-Hastings algorithm (MCMC). New addresses are proposed
-from offdiagonal connections and the accepted/rejected using Acceptance ratio.
+Perform one step of the Metropolis–Hastings (MCMC) sampler for VMC.
+
+For each walker `n` in the batch, a new configuration `m` is proposed uniformly at
+random among the off-diagonal connections of `n`, i.e. the configurations with
+``H_{nm} \\neq 0``, optionally restricted by the truncation mask of `ansatz`.
+The proposal is accepted with probability
 
 ```math
 A(m|n) = \\min\\left(1, \\frac{|\\psi(m)|^2}{|\\psi(n)|^2} \\frac{N_n}{N_m}\\right),
 ```
 
-where `N_n` and `N_m` are the numbers of valid off-diagonals spawned from address 
-`n` and `m`. 
+where ``N_n`` and ``N_m`` are the numbers of valid off-diagonal connections of `n`
+and `m`. The factor ``N_n/N_m`` is the Hastings correction for the uniform proposal
+``q(m|n) = 1/N_n``. It ensures detailed balance with respect to ``|\\psi|^2`` even
+when configurations have different numbers of connections.
 
-# Variables
-* `vmc_buf`: [`VMCBuffer`](@ref) intermediate variables for allocation-free calculations.
-* `jacobian_buf`: [`JacobianBuffer`](@ref) used during calculation of pre-sample jacobians.
-* `hamiltonian`: hamiltonian defined in Rimu.
-* `addrs_n`: current sample addresses (of batch size).
-* `ansatz`: ansatz for wave-function evaluation. See [`NeuralAnsatz`](@ref).
+The exponent of the amplitude ratio is clamped to `[-80, 80]` before `exp()` to avoid
+`Float32` overflow. Rejected proposals keep the walker in place, so the chain is
+aperiodic without an explicit lazy step (compare [`ctmc_sample!`](@ref)).
+
+# Arguments
+* `vmc_buf`: [`VMCBuffer`](@ref) holding intermediate variables for allocation-free
+  calculations.
+* `jacobian_buf`: [`JacobianBuffer`](@ref) used to compute the per-sample Jacobians.
+* `hamiltonian`: Hamiltonian defined in Rimu.
+* `addrs_n`: current walker addresses (length = batch size `B`). Updated in place.
+* `ansatz`: wave-function ansatz, see [`NeuralAnsatz`](@ref).
+
+# Keywords
+* `eclamp::Bool=true`: clip outlying local energies, see
+  [`calculate_local_energy!`](@ref) and [`elocs_clamping!`](@ref).
+
+# Returns
+* `new_addrs`: `(B,)` next walker positions (the same array as `addrs_n`).
+* `E_locs`: `(B,)` local energies of the configurations `n` *before* the move.
+* `weights`: `(B,)` uniform weights `1/B`.
+* `grads_n`: `(p, B)` per-sample gradients of `log ψ(n)`, or `nothing` if `vmc_buf.start`
+  is `false`.
+* `acc`: acceptance rate over the batch, in `[0, 1]`.
+
+All arrays live on the same device (CPU/GPU) as the inputs.
+
+## Note
+When `vmc_buf.start` is `false` (e.g. during thermalization), only the walkers are
+advanced. In that case `E_locs` and `weights` are **not** computed: `E_locs` holds the
+random acceptance draws and `weights` keeps its previous contents.
 """
-function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
+function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz; 
+                            eclamp::Bool=true)
     B = ansatz.model.batch # batch 
 
     # --- STEP 0: all needed variables from buffer ---------------------------------
@@ -93,7 +124,8 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
 
     # --- STEP 6: E_loc calculations and weights -----------------------------------
     if vmc_buf.start
-        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, offdiag_logψ, offdiag_sign) # saved in E_locs
+        calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, offdiag_logψ, offdiag_sign;
+                               eclamp=eclamp) # saved in E_locs
         fill!(weights, 1f0 / B)
     end
 
@@ -102,7 +134,7 @@ function metropolis_sample!(vmc_buf, jacobian_buf, hamiltonian, addrs_n, ansatz)
     # E_locs:    (B,) local energies        -> CPU/GPU
     # weights:   (B,) uniform weights       -> CPU/GPU
     # grads_n:   (p,B) gradients            -> CPU/GPU 
-    # acc:       acceptance over batch input (in %)
+    # acc:       acceptance over batch input ([0,1] -> 0.75 = 75%)
     return new_addrs, E_locs, weights, grads_n, acc
 end
 

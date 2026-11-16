@@ -2,35 +2,50 @@
 # using Statistics
 
 """
-    calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign)
+    calculate_local_energy!(ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign; eclamp=true)
 
-This function calculates local energies in VMC. It is designed for dispatch on
-the type of [`AnsatzType`](@ref) as different representations of wave-function
-could require different approaches how to evaluate the equation:
+Calculate the local energies of a VMC batch in place, storing them in `vmc_buf.E_locs`.
+
+The function dispatches on the [`AnsatzType`](@ref) of `ansatz`, since different
+wave-function representations may require different ways of evaluating
 
 ```math
-E_{loc}(n) = H_{nn} + \\sum_m H_{nm} * \\frac{\\psi(m)}{\\psi(n)}.
+E_{loc}(n) = H_{nn} + \\sum_{m \\neq n} H_{nm} \\frac{\\psi(m)}{\\psi(n)},
 ```
 
-It utilise `vmc_buf` for all necessary intermediate variables for allocation-free 
-calculations. The wave-function ratio is clamped to `Float32` precision for `exp()`.
+where the amplitude ratio is computed from log-amplitudes and signs as
+``\\psi(m)/\\psi(n) = s(m)\\,s(n)\\,\\exp(\\log|\\psi(m)| - \\log|\\psi(n)|)``.
+The exponent is clamped to the `Float32` range before `exp()` to avoid overflow.
 
-# Variables
-* `ansatz`: ansatz for wave-function, see [`NeuralAnsatz`](@ref).
+All intermediate quantities live in `vmc_buf`, so the calculation is allocation-free.
+
+# Arguments
+* `ansatz`: wave-function ansatz, see [`NeuralAnsatz`](@ref).
 * `vmc_buf`: buffer for VMC calculations, see [`VMCBuffer`](@ref).
-* `n_logψ`: this represent vector of `log|ψ|` wave-function amplitudes.
-* `n_sign`: this represent vector/number of signs of `ψ` wave-function.
+* `n_logψ`: vector of `log|ψ(n)|` for the sampled configurations `n`.
+* `n_sign`: signs of `ψ(n)`, as a vector or a single number.
+* `m_logψ`: vector of `log|ψ(m)|` for the connected configurations `m`.
+* `m_sign`: signs of `ψ(m)`, as a vector or a single number.
+
+# Keyword Arguments
+* `eclamp::Bool=true`: clip outlying local energies with
+  [`elocs_clamping!`](@ref) after they are computed.
+
+# Returns
+`nothing`; the result is written to `vmc_buf.E_locs`.
 
 ## Note
-The local energies are clamped [`elocs_clamping!`](@ref) at the end to counter node-like 
-instabilities. Those can occur not only in nodes themselves but also in not pre-trained 
-neural network which can looks like a node. 
+Clipping counters node-like instabilities, where ``\\psi(n) \\approx 0`` makes
+the ratio blow up. These occur not only at true nodes of the wave function but also
+with a not-yet-trained neural network, whose output can resemble a node.
 """
-function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign, m_logψ, m_sign)
-    calculate_local_energy!(ansatz.ansatz_type, ansatz, vmc_buf, n_logψ, n_sign, m_logψ, m_sign)
+function calculate_local_energy!(ansatz, vmc_buf::VMCBuffer, n_logψ, n_sign, m_logψ, m_sign;
+                                eclamp::Bool=true)
+    calculate_local_energy!(ansatz.ansatz_type, ansatz, vmc_buf, n_logψ, n_sign, 
+                            m_logψ, m_sign; eclamp=eclamp)
 end
 function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
-                                 n_logψ, n_sign, m_logψ, m_sign)
+                                 n_logψ, n_sign, m_logψ, m_sign; eclamp::Bool=true)
     ham_diag = vmc_buf.ham_diag                     # (B,)
     ham_offdiag = vmc_buf.ham_offdiag_buf.data      # (K, B)
     offsets = vmc_buf.offsets                       # (B,) cumulative
@@ -41,7 +56,9 @@ function calculate_local_energy!(::AnsatzType, ansatz, vmc_buf::VMCBuffer,
     _local_energy_kernel!(backend)(E_locs, ham_diag, offsets, ham_offdiag, m_logψ, m_sign,
                                    n_logψ, n_sign; ndrange = ansatz.model.batch)
 
-    elocs_clamping!(E_locs, median_cpu)
+    eclamp && elocs_clamping!(E_locs, median_cpu)
+
+    return nothing
 end
 
 @kernel function _local_energy_kernel!(E_locs, ham_diag, offsets, ham_offdiag,
@@ -95,6 +112,10 @@ faster than the GPU for arrays of this size.
 function elocs_clamping!(E_locs, median_cpu; q::Float32 = 0.99f0, n_q::Float32 = 10f0)
     copyto!(median_cpu, E_locs)
     med = median!(median_cpu)
+    if !isfinite(med)
+        @warn "elocs_clamping!: median = $med non-finite — skipping clipping"
+        return E_locs
+    end
     median_cpu .= abs.(median_cpu .- med)       # reuse buffer: |E − med| - distance from median
     dq = Float32(quantile!(median_cpu, q))      # 99th percentile, in place
     if !(isfinite(dq) && dq > 0f0)

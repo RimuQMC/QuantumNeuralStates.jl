@@ -23,8 +23,8 @@ _pool_uniform!
 _pool_extremum!
 _pool_backward!
 
-chain_signature
 encoding_signature
+chain_signature
 nn_signature
 _signature
 _write_architecture
@@ -47,6 +47,7 @@ _mem_array
 _set_params!
 _get_params!
 addrs_random
+coupled_modes
 safe_denom
 select_device
 RunningMean
@@ -74,6 +75,7 @@ _src
 _tap_inv
 _check_input
 _input_shape
+_conv_forward_kernel!
 _pool_forward_kernel!
 LayerNorm_multiforward
 

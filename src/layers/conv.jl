@@ -243,8 +243,8 @@ _check_input(::PadMode, input_size, K) =
     forward(layer::Conv, x::AbstractArray) -> layer.z
 
 Forward pass through a [`Conv`](@ref) layer. It calculates the forward pass
-in-place of the `Conv` structure and also returns its layer output. It utilise
-`@kernel` call function that automatically runs on `Conv` device.
+in-place of the `Conv` structure and also returns its layer output. It launches
+kernel function that runs the forward pass, see [`_conv_forward_kernel!`](@ref).
 
 # Arguments
 * `layer`: a `Conv` layer
@@ -298,6 +298,30 @@ function forward(layer::Conv, x::AbstractArray, layerMulti)
     return layerMulti.a
 end
 
+"""
+    _conv_forward_kernel!(backend)(a, x, W, b, stride, pad, Val(Nsp); ndrange = size(a))
+
+N-dimensional convolution (pre-activation). Each work item computes one entry
+`a[p..., o, n]`:
+
+```math
+a_{p,o,n} = b_o + \\sum_k \\sum_{c=1}^{C_{in}} W_{k,c,o} \\, x_{s(p,k),c,n}
+```
+
+with source index per spatial dimension ``d``
+
+```math
+s_d(p, k) = (p_d - 1) \\cdot \\mathrm{stride} + k_d - \\mathrm{pad}_d
+```
+
+Taps with ``s_d \\le 0`` are skipped (zero padding). The loop runs over taps ``k`` in the
+outer loop and channels ``c`` in the inner loop.
+
+# Layouts
+- `x`: `(L..., C_in, N)`
+- `W`: `(K..., C_in, C_out)`
+- `a`: `(P..., C_out, N)`
+"""
 @kernel function _conv_forward_kernel!(a, @Const(x), @Const(W), @Const(b), stride::Int,
                                        pad, ::Val{Nsp}) where Nsp
     idx = @index(Global, NTuple)                 # (p..., c_out, n)

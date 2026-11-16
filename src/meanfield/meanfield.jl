@@ -49,8 +49,8 @@ function MeanField(H; backend = KernelAbstractions.CPU(), eltype = Float32)
 end
 
 """
-    (mf)(addrs, result)            # addrs::AbstractVector, size (B,)
-    (mf)(addrs, offsets, result)   # addrs::AbstractMatrix, size (K, B), ragged columns
+    (mf::MeanField)(addrs, result)            # addrs::AbstractVector, size (B,)
+    (mf::MeanField)(addrs, offsets, result)   # addrs::AbstractMatrix, size (K, B), ragged columns
 
 Add the mean-field log-amplitude of each configuration to `result` in place.
 

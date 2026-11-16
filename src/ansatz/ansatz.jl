@@ -22,7 +22,7 @@ and importance sampling.
 * `input_scale_func`: scaling function for inputs (default: `identity`).
 * `max_norm`: maximum particle number for input normalisation. Must be 
                 positive if provided.
-* `multiforward_buffer`: can be set with `Int` number. This number would determine
+* `multi_forward_buffer`: can be set with `Int` number. This number would determine
                 usually bigger batch forward passes. See [`MultiForwardBuffer`](@ref).
 * `mean_field`: if set `true` the mean-field would add to neural network wave-funciton
                 evaluation. Needs to be manually defined, see [`MeanField`](@ref).
@@ -125,7 +125,7 @@ mutable struct NeuralAnsatz{T<:Real,TH<:Real,A,H,AT<:AnsatzType,M,XA<:AbstractAr
 end
 function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size; 
                     input_scale_func=identity, max_norm::Union{Nothing, Int}=nothing, 
-                    multiforward_buffer=nothing, mean_field::Bool=false, truncation=nothing,
+                    multi_forward_buffer=nothing, mean_field::Bool=false, truncation=nothing,
                     neuron_statistics::Union{Bool,String}=false, jacobian_statistics::Union{Bool,String}=false
     )
     AT=typeof(ansatz_type)
@@ -179,12 +179,12 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
     MN=typeof(max_norm)
 
     # multi forward buffer
-    multi_forward_buffer = if multiforward_buffer === nothing
+    multiforward_buffer = if multi_forward_buffer === nothing
         nothing
     else
-        MultiForwardBuffer(model, addr, multiforward_buffer)
+        MultiForwardBuffer(model, addr, multi_forward_buffer)
     end
-    MFB=typeof(multi_forward_buffer)
+    MFB=typeof(multiforward_buffer)
 
     # mean-field
     meanfield = mean_field ? MeanField(hamiltonian; backend=backend, eltype=T) : nothing
@@ -200,7 +200,7 @@ function NeuralAnsatz(ansatz_type::AnsatzType, hamiltonian, model, batch_size;
                 ansatz_type, hamiltonian, model, logψ_centering,
                 addrs_buffer, result_buffer, result_dict, first_iter, 
                 addrs_device, vals_device, off_device,
-                input_scale_func, max_norm, normalisation, multi_forward_buffer, 
+                input_scale_func, max_norm, normalisation, multiforward_buffer, 
                 meanfield, trun, neuron_statistics, jacobian_statistics)
 end
 
@@ -229,7 +229,7 @@ end
     prepare_input!(na::NeuralAnsatz, addrs::AbstractVector, x) -> x
 
 Write the scaled occupation numbers `input_scale_func(onr(addr)) * normalisation`
-into the occupation channel of the input buffer `x` (shape of the `Chain` input).
+into the occupation channel of the input buffer `x` (shape of the [`Chain`](@ref) input).
 A single `addr` fills every column; a vector `addrs` fills one column per address.
 
 Runs as a KernelAbstractions kernel on the device of `x`:
@@ -468,45 +468,4 @@ Number of stream positions before column `b`: the end of the previous column,
 column is `k = g - _column_start(offsets, b)`.
 """
 @inline _column_start(offsets, b) = b == 1 ? 0 : Int(@inbounds offsets[b - 1])
-
-"""
-    compute_ψ_64(ansatz, addr) -> Float64.(exp.(logψ))
-
-Similar as [`compute_logψ`](@ref), but returns exp(logψ) values in Float64 format. 
-This way the return value is compatible with Rimu format. It is used in Rimu's
-Importance Sampling.
-
-## Note
-The `Float32 -> Float64` transfer is realised with `copyto!` where we copy 
-`model` results to `Float64` buffer and the conversion happens automatically.
-"""
-function compute_ψ_64(na::NeuralAnsatz, addr)
-    x = prepare_input!(na, addr, na.x_cpu_buffer)
-    logψ = na.model(x)
-    copyto!(na.z_cpu, logψ)
-    na.z_cpu .= exp.(na.z_cpu)
-    # return exp.(Float64.(logψ .- 40f0))
-    return na.z_cpu
-end
-function compute_ψ_64(na::NeuralAnsatz, addr, multi_forward_buffer)
-    x = prepare_input!(na, addr, multi_forward_buffer.x_cpu)
-    logψ = na.model(x, multi_forward_buffer)
-    copyto!(multi_forward_buffer.z_cpu, logψ)
-    multi_forward_buffer.z_cpu .= exp.(multi_forward_buffer.z_cpu)
-    # return exp.(Float64.(logψ .- 40f0))
-    return multi_forward_buffer.z_cpu
-end
-
-"""
-    (na)(addr, params)
-
-Calls [`compute_ψ_64`](@ref) function during Rimu Importance Sampling 
-calculations. 
-"""
-function (na::NeuralAnsatz)(addr)
-    return compute_ψ_64(na, addr)
-end
-function (na::NeuralAnsatz)(addr, multi_forward_buffer)
-    return compute_ψ_64(na, addr, multi_forward_buffer)
-end
 

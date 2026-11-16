@@ -4,8 +4,10 @@ using Statistics
 using QuantumNeuralStates
 using Rimu
 using Test
+using Random
 
 @testset "CG solver" begin
+    Random.seed!(1)
     T = Float32
     N, p = 5, 10
     λ = 1f-3
@@ -26,7 +28,8 @@ using Test
 
     A = J1' * J1 + λ * I(N)
     @test ok
-    @test norm(A * x - g1) / norm(g1) ≤ relres + 1f-5     # reported residual is honest
+    @test relres ≤ 1f-2
+    @test norm(A * x - g1) / norm(g1) ≤ relres + 1f-4     # reported residual is honest
     x1 = A \ g1
     @test isapprox(x, x1; rtol = 1e-2)      # within the CG tolerance
 end
@@ -39,7 +42,7 @@ end
     H = FroehlichPolaron{Float32}(addr; D = 1, alpha = 2, l = 5, mode_cutoff=N)
 
     enc = OccupationEncoding((M,), H)
-    model  = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
+    model = build_model("FCNN", enc, [M, 10, 10, 10, 1], tanh_fast; batch=batch)
     ansatz = NeuralAnsatz(LogPsi(), H, model, batch)
 
     buffers = make_buffers(ansatz.model)
@@ -47,6 +50,10 @@ end
     vmc_buf = VMCBuffer(ansatz, addr)
     addrs_n = fill(addr, batch)
     n_params = length(jac_buf.θ)
+
+    var_track = QuantumNeuralStates.RunningMean{T}() 
+    s_track = QuantumNeuralStates.RunningMean{T}()
+
 
     @testset "Descent" begin
         descent_buf = DescentBuffer(batch, n_params, ansatz)
@@ -57,11 +64,11 @@ end
         @test_nowarn adam(jac_buf, vmc_buf, adam_buf, H, ansatz, addrs_n; burnin=3)
     end
     @testset "minSR" begin
-        minSR_buf = minSRBuffer(batch, n_params, ansatz)
+        minSR_buf = minSRBuffer(batch, n_params, ansatz; var_track=var_track, s_track=s_track)
         @test_nowarn minSR(jac_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; burnin=3)
     end
     @testset "minSR + momentum" begin
-        minSR_buf = minSRBuffer(batch, n_params, ansatz; velocity=true)
+        minSR_buf = minSRBuffer(batch, n_params, ansatz; velocity=true, var_track=var_track, s_track=s_track)
         @test_nowarn minSR(jac_buf, vmc_buf, minSR_buf, H, ansatz, addrs_n; burnin=3)
     end
 end

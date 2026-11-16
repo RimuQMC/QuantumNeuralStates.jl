@@ -108,7 +108,7 @@ with `f_k(η)` from [`calc_f`](@ref).
 
 # References
 * T. D. Lee, F. E. Low, D. Pines, Phys. Rev. 90, 297 (1953).
-* arXiv:1510.04934.
+* https://journals.aps.org/pr/pdf/10.1103/PhysRev.90.297.
 """
 function solve_self_consistent_eta(h::Rimu.FroehlichPolaron{T,M,D};
                                      tol::T = sqrt(eps(T)), # ≈ 3.5e-4 (Float32), 1.5e-8 (Float64)

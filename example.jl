@@ -14,45 +14,11 @@ Random.seed!(1234)
 # but this generally picks the GPU based on what package is loaded
 device = select_device()
 
-# N = 10 # number of particles
-# M = 7*7 # number of sites 10*10
-# addr = BoseFS{missing, M}()
-# H = FroehlichPolaron(addr; D=2, alpha=2, l=5, mode_cutoff=N)
-# # -------------------------------------------------------------------
-# # NN Model
-# # -------------------------------------------------------------------
-#
-# #model FCNN = Chain(Dense(15, 64, tanh), Dense(64, 32, tanh), Dense(32, 1))
-# batch  = 1024
-# #model  = build_model("FCNN", [M, 600, 600, 600, 600, 600, 600, 1], tanh_fast; batch=batch, device=device, Layer_Norm=true);
-# act = gelu_fast
-# pad = Zeros()
-# input = MomentumEncoding((7,7), H; device=device)
-# model  = Chain(input,
-#                #Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-#                #Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-#                #Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-#                #Pool(:sum; device=device),
-#                #Dense(32=>32, tanh_fast; batch=batch, device=device, layer_norm=true),
-#                #Dense(32=>1, identity; batch=batch, device=device);
-#                Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-#                Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
-#                Conv((3,3), 32=>1, act; batch=batch, device=device, pad=pad),
-#                Pool(:sum; device=device),
-#                Dense(1=>1, identity; batch=batch, device=device);
-#                batch=batch, device=device)
-#
-# ansatz  = NeuralAnsatz(LogPsi(), H, model, batch; input_scale_func=sqrt)
 # -------------------------------------------------------------------
 # Quantum System
 # -------------------------------------------------------------------
 N = 255 # number of particles
-# M = 10 # number of sites
-# addr = near_uniform(BoseFS{N,M}) # Rimu
-# H = HubbardReal1D{Float32}(addr; u=0.1) # Rimu
-M = 5*5 # number of sites
+M = 7*7 # number of sites
 addr = BoseFS{missing, M}()                                  # phonon vacuum, variable phonon number
 H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 
@@ -62,20 +28,20 @@ H    = FroehlichPolaron{Float32}(addr; D = 2, alpha = 2, l = 5, mode_cutoff=N)
 batch  = 1024
 act = relu
 pad = Zeros()
-input = OccupationEncoding((5,5), H; device=device)
+input = OccupationEncoding((7,7), H; device=device)
 model = Chain(input,
-              # Dense(nsites(input)*nchannels(input)=>500, tanh; batch=batch, device=device, layer_norm=true), 
-              # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
-              # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
-              # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
-              # Dense(500=>500, tanh; batch=batch, device=device, layer_norm=true), 
-              # Dense(500=>1, identity; batch=batch, device=device); 
+              # Dense(nsites(input)*nchannels(input)=>64, act; batch=batch, device=device), 
+              # Dense(64=>64, act; batch=batch, device=device), 
+              # Dense(64=>64, act; batch=batch, device=device), 
+              # Dense(64=>64, act; batch=batch, device=device), 
+              # Dense(64=>64, act; batch=batch, device=device), 
+              # Dense(64=>1, identity; batch=batch, device=device); 
               Conv((3,3), nchannels(input)=>32, act; batch=batch, device=device, pad=pad),
-              # Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
+              Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>32, act; batch=batch, device=device, pad=pad),
               Conv((3,3), 32=>1, identity; batch=batch, device=device, pad=pad),
               Pool(:sum; device=device),
-              Dense(1=>1, identity; batch=batch, device=device, init_scale=0.01);
+              Dense(1=>1, identity; batch=batch, device=device, init_scale=0.1);
               batch=batch, device=device)
 
 ansatz = NeuralAnsatz(LogPsi(), H, model, batch; 
@@ -85,13 +51,44 @@ ansatz = NeuralAnsatz(LogPsi(), H, model, batch;
 # ALL TRAINING VARIABLES
 # -------------------------------------------------------------------
 phases = [
+    # TrainingPhase(
+    #     mode       = :energy,
+    #     optimiser  = :minSR,
+    #     vmc_sampler= :ctmc,
+    #     stop       = StopBuffer(var_thr=0.001),
+    #     η          = 0.01f0,
+    #     skip       = [(1, 20)],  # (epoch, B) → burnin B
+    #     # η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
+    #     # skip       = [(1, 20)],  # (epoch, B) → burnin B
+    #     # truncation = 3*3,
+    #     block_size = 10, 
+    #     block_min  = 6, 
+    #     patience   = 3,
+    #     max_epochs = 200,
+    # ),
+    TrainingPhase(
+        mode       = :energy,
+        optimiser  = :minSR,
+        vmc_sampler= :ctmc,
+        stop       = StopBuffer(var_thr=1000),
+        η          = 0.01f0,
+        skip       = [(1, 20)],  # (epoch, B) → burnin B
+        # skip       = [(1, 20)],  # (epoch, B) → burnin B
+        # truncation = 3*3,
+        d_loose = 0.3f0,
+        block_size = 10, 
+        block_min  = 6, 
+        patience   = 3,
+        max_epochs = 1000,
+    ),
     TrainingPhase(
         mode       = :energy,
         optimiser  = :minSR,
         vmc_sampler= :ctmc,
         stop       = StopBuffer(var_thr=0.001),
         η          = 0.01f0,
-        skip       = [(1, 300), (2, 50), (10, 20)],  # (epoch, B) → burnin B
+        skip       = [(1, 20)],  # (epoch, B) → burnin B
+        # η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
         # skip       = [(1, 20)],  # (epoch, B) → burnin B
         # truncation = 3*3,
         block_size = 10, 
@@ -99,51 +96,26 @@ phases = [
         patience   = 3,
         max_epochs = 200,
     ),
-    # TrainingPhase(
-    #     mode       = :energy,
-    #     optimiser  = :minSR,
-    #     vmc_sampler= :ctmc,
-    #     stop       = StopBuffer(var_thr=0.1),
-    #     η          = 0.001f0,
-    #     skip       = [(1, 10), (300, 200)],  # (epoch, B) → burnin B
-    #     # η_decrease = [(0.1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
-    #     truncation = 5*5,
-    #     block_size = 10, 
-    #     block_min  = 6, 
-    #     patience   = 3,
-    #     max_epochs = 200,
-    # ),
-    # TrainingPhase(
-    #     mode       = :energy,
-    #     optimiser  = :minSR,
-    #     vmc_sampler= :ctmc,
-    #     stop       = StopBuffer(ΔE_thr=0.00005, var_thr=1),
-    #     η          = 0.001f0,
-    #     λ          = 0.001f0,
-    #     skip       = [(1, 20)],
-    #     η_decrease = [(1, 0.1)], #  (var_thr, factor), if var < thr → η *= factor
-    #     block_size = 10, 
-    #     block_min  = 6, 
-    #     patience   = 3,
-    #     max_epochs = 30,
-    # ),
 ]
 
 # filename where learned weights (and inputs) will be stored AND if I want to load saved weights (and inputs)
-SAVEFILE = "./weights/test_id_occ3_N255long_init_scale1f-2.txt"
+SAVEFILE = "./weights_poster/CNN_3Conv-32_relu_M49_N255_alpha2.0_3.txt"
 SAVE_WEIGHTS = true
-LOADFILE = "./weights/test_id_occ2_N255long_init_scale1f-2.txt"
+LOADFILE = "./weights_poster/CNN_3Conv-32_relu_M49_N255_alpha2.0_2.txt"
 LOAD_WEIGHTS = true
 MARKOVFILE = "MarkovChain.txt" # saving Markov Chain
 SAVE_MARKOV = false
+OCCFILE = "./fig/CNN_3Conv-32_relu_M49_N255_alpha2.0_3.png"
+OCC_PLOT = true
 
 # --------------------------------------------------------------------------------------------------------------------------------------
 # TRAINING LOOP
 # --------------------------------------------------------------------------------------------------------------------------------------
 
 t = @timed run_training_loop(H, ansatz, addr, phases; 
-                                                                            savefile=SAVEFILE, loadfile=LOADFILE, 
-                                                                            save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
-                                                                            markovfile=MARKOVFILE, markov=SAVE_MARKOV);
+                            savefile=SAVEFILE, loadfile=LOADFILE, 
+                            save=SAVE_WEIGHTS, load=LOAD_WEIGHTS, 
+                            occfile=OCCFILE, occplot=OCC_PLOT,
+                            markovfile=MARKOVFILE, markov=SAVE_MARKOV);
 
 println(t.time)
