@@ -102,6 +102,11 @@ Lastly, we need to define training parameters. This is done inside `TrainingPhas
 can be stacked. We can also define keyword arguments about details if we want to save/load
 result of training.
 
+> [!TIP]
+> Start first phases with `metropolis` sampler. At the beginning of training it is more
+> stable using uniform sampler. Later switch to `ctmc` sampler as it is more efficient 
+> (although more unpredictible in first stages).
+
 ```julia
 phases = [
     TrainingPhase(
