@@ -242,113 +242,352 @@ _check_input(::PadMode, input_size, K) =
 """
     forward(layer::Conv, x::AbstractArray) -> layer.z
 
-Forward pass through a [`Conv`](@ref) layer. It calculates the forward pass
-in-place of the `Conv` structure and also returns its layer output. It launches
-kernel function that runs the forward pass, see [`_conv_forward_kernel!`](@ref).
+Forward pass through a [`Conv`](@ref) layer, using kernel function of
+[`conv_tiled!`](@ref):
+
+```math
+\\begin{aligned}
+a_{\\mathbf{p},o,n} &= b_o + \\sum_{\\mathbf{k}} \\sum_{c=1}^{C_\\text{in}}
+    W_{\\mathbf{k},c,o} \\; x_{\\mathbf{s}(\\mathbf{p},\\mathbf{k}),c,n} \\\\
+z_{\\mathbf{p},o,n} &= \\text{act\\_func}(a_{\\mathbf{p},o,n})
+\\end{aligned}
+```
+
+with output site ``\\mathbf{p}``, kernel tap ``\\mathbf{k}``, input channel
+``c``, output channel ``o``, sample ``n``, and source index per spatial
+dimension ``d``
+
+```math
+s_d(\\mathbf{p}, \\mathbf{k}) = (p_d - 1)\\,\\mathrm{stride} + k_d - \\mathrm{pad}_d,
+```
+
+mapped into the input grid according to the padding mode ([`NoPad`](@ref),
+[`Zeros`](@ref), [`Periodic`](@ref)). Taps falling outside the input under
+`Zeros` padding are skipped.
 
 # Arguments
-* `layer`: a `Conv` layer
+* `layer`: a `Conv` layer.
 * `x`: input array, shape `(L_in..., C_in, batch)`.
 
-# Note
-*On the first call, the buffers `layer.a` and `layer.z` are allocated with shape
-`(L_out..., C_out, batch)`, where `L_out` is determined by the input grid,
-kernel size, stride and padding mode. All subsequent calls are allocation-free.
+# Layouts
+- `x`: `(L_in..., C_in, batch)`
+- `layer.W`: `(K..., C_in, C_out)`
+- `layer.a`, `layer.z`: `(L_out..., C_out, batch)`
+
+# How the computation is organised
+The pass runs as a single device kernel ([`conv_tiled!`](@ref)):
+
+* **Work item = one output site, `TILE` output channels.** Each work item
+  keeps `TILE = min(32, C_out)` accumulators in registers. Every input value
+  `x[s, c, n]` is loaded once and used for `TILE` multiply-adds, which keeps
+  the number of memory loads per arithmetic operation low.
+* **Fused bias and activation.** `a = acc + b` and `z = act_func(a)` are
+  written directly; no separate activation pass is needed.
+* **Weights in shared memory.** If `W` fits into the shared-memory budget
+  ([`SMEM_BUDGET`](@ref), 32 KB), each workgroup copies it once into fast
+  on-chip memory; otherwise it is read from global memory.
+* **Compile-time sizes.** Grid, kernel and channel sizes are passed to the
+  kernel as type parameters, so loops are unrolled and index arithmetic is
+  constant-folded. A specialised kernel is compiled once per layer shape.
+
+The kernel is dimension-agnostic (1D, 2D, 3D, ...), supports any stride and
+padding mode, and runs on all KernelAbstractions backends (CUDA, Metal, CPU).
+
+# Notes
+* On the first call, the buffers `layer.a` and `layer.z` are allocated with
+  shape `(L_out..., C_out, batch)`, where `L_out` follows from the input grid,
+  kernel size, stride and padding mode. All subsequent calls are
+  allocation-free.
+* `layer.a` holds the pre-activation required for backpropagation.
 """
 function forward(layer::Conv, x::AbstractArray)
-    # First pass = initialize `a` and `z`
-    Nsp = Val(ndims(x) - 2)
-    a0 = layer.a
-    if a0 === nothing
+    Nsp = ndims(x) - 2
+    if layer.a === nothing
         C_out = size(layer.W)[end]
         batch = size(x)[end]
-
         L_out = ntuple(d -> _lout(layer.pad, size(x, d), size(layer.W, d), layer.stride), Nsp)
         any(<(1), L_out) &&
             error("Grid $(size(x)[1:end-2]) is too small for kernel $(size(layer.W)[1:end-2])")
-
         layer.z = fill!(similar(layer.W, L_out..., C_out, batch), zero(eltype(layer.W)))
         layer.a = fill!(similar(layer.W, L_out..., C_out, batch), zero(eltype(layer.W)))
     end
-
-    a = something(layer.a)  # narrowed to Z type
+    a = something(layer.a)
     z = something(layer.z)
-
-    backend = KernelAbstractions.get_backend(x)
-    _conv_forward_kernel!(backend)(a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp; 
-                          ndrange = size(a))
-    apply_act!(layer, a, z)
-
+    conv_tiled!(a, z, x, layer)
     return z
 end
 
 """
     forward(layer::Conv, x::AbstractArray, layerMulti) -> layerMulti.a
 
-Similar as [`forward`](@ref), but it allows multi batched forward pass. `layerMulti`
-holds the (pre-allocated, fixed `buffer_size`) output of this pass.
+Multi-batched forward pass through a [`Conv`](@ref) layer into the
+pre-allocated buffer `layerMulti.a` (fixed `buffer_size`). Computes the same
+quantity as [`forward`](@ref):
+
+```math
+z_{\\mathbf{p},o,n} = \\text{act\\_func}\\Big(b_o + \\sum_{\\mathbf{k}} \\sum_{c=1}^{C_\\text{in}}
+    W_{\\mathbf{k},c,o} \\; x_{\\mathbf{s}(\\mathbf{p},\\mathbf{k}),c,n}\\Big)
+```
+
+using the same kernel ([`conv_tiled!`](@ref)) and computational scheme. The
+result is written in place: `layerMulti.a` holds the activated output, since
+the pre-activation is not needed in inference-only passes.
+
+# Arguments
+* `layer`: a `Conv` layer.
+* `x`: input array, shape `(L_in..., C_in, buffer_size)`.
+* `layerMulti`: holds the output buffer `a` of shape `(L_out..., C_out, buffer_size)`.
 """
 function forward(layer::Conv, x::AbstractArray, layerMulti)
-    Nsp = Val(ndims(x) - 2)
-    backend = KernelAbstractions.get_backend(x)
-    _conv_forward_kernel!(backend)(layerMulti.a, x, layer.W, layer.b, layer.stride, layer.pad, Nsp;
-                                   ndrange = size(layerMulti.a))
-    apply_act!(layer, layerMulti.a, layerMulti.a)
-
+    conv_tiled!(layerMulti.a, layerMulti.a, x, layer)
     return layerMulti.a
 end
 
 """
-    _conv_forward_kernel!(backend)(a, x, W, b, stride, pad, Val(Nsp); ndrange = size(a))
+    conv_tiled!(a, z, x, layer::Conv; tile=32, wg=256, smem_budget) -> z
 
-N-dimensional convolution (pre-activation). Each work item computes one entry
-`a[p..., o, n]`:
+Convolution of `layer::Conv` applied to `x` with fused bias and activation: `a`
+receives the pre-activation, `z` the activated output. `a === z` is allowed.
+This function launches kernel function [`_conv_tiled_kernel!`](@ref).
 
-```math
-a_{p,o,n} = b_o + \\sum_k \\sum_{c=1}^{C_{in}} W_{k,c,o} \\, x_{s(p,k),c,n}
-```
+Works for any number of spatial dimensions, any stride and any
+[`PadMode`](@ref), on every KernelAbstractions backend. See [`forward`](@ref)
+for the full description.
 
-with source index per spatial dimension ``d``
+All sizes are read from the arrays and passed to the kernel as `Val`s, so a
+specialised kernel is compiled once per layer shape on first use.
 
-```math
-s_d(p, k) = (p_d - 1) \\cdot \\mathrm{stride} + k_d - \\mathrm{pad}_d
-```
+# Keyword Arguments
+* `tile`: maximum number of output channels per work item (default `32`); the
+  actual tile is `min(tile, C_out)`.
+* `wg`: work items per workgroup (default `256`).
+* `smem_budget`: bytes of shared memory allowed for staging `W` (default
+  [`_default_smem_budget`](@ref) of the backend of `x`).
+"""
+function conv_tiled!(a, z, x, layer::Conv; tile::Int = 32, wg::Int = 256,
+                     smem_budget::Int = _default_smem_budget(KernelAbstractions.get_backend(x)))
+    Nsp = ndims(x) - 2
+    Ls = size(x)[1:Nsp]
+    Ps = size(a)[1:Nsp]
+    Ks = size(layer.W)[1:Nsp]
+    C_in = size(x, Nsp + 1)
+    C_out = size(layer.W, Nsp + 2)
+    N = size(x, Nsp + 2)
 
-Taps with ``s_d \\le 0`` are skipped (zero padding). The loop runs over taps ``k`` in the
-outer loop and channels ``c`` in the inner loop.
+    TILE = min(tile, C_out)
+    total = prod(Ps) * cld(C_out, TILE) * N
+
+    WS = length(layer.W) * sizeof(eltype(a)) <= smem_budget
+    WN = WS ? length(layer.W) : 1
+
+    backend = KernelAbstractions.get_backend(x)
+    _conv_tiled_kernel!(backend, wg)(a, z, x, layer.W, layer.b, layer.act_func, layer.pad,
+        layer.stride, N,
+        Val(Ls), Val(Ps), Val(Ks), Val(C_in), Val(C_out),
+        Val(TILE), Val(WS), Val(WN);
+        ndrange = cld(total, wg) * wg)
+    return z
+end
+
+"""
+    _conv_tiled_kernel!(backend, wg)(a, z, x, W, b, act, pad, stride, N,
+                                     Val(Ls), Val(Ps), Val(Ks), Val(C_in), Val(C_out),
+                                     Val(TILE), Val(WS), Val(WN); ndrange)
+
+Device kernel of [`conv_tiled!`](@ref): N-dimensional convolution with fused
+bias and activation. Each work item computes `TILE` output channels of one
+output site of one sample; see [`forward`](@ref) for the full description.
+
+# Launch layout
+1D ndrange, rounded up to a multiple of the workgroup size `wg`. All work items
+of a workgroup first copy `W` into shared memory (if `WS`) and synchronise;
+work items with a linear index beyond the real work then return. Each
+remaining work item recovers its index `(p..., t, n)` (site, channel tile,
+sample) from its linear index.
 
 # Layouts
 - `x`: `(L..., C_in, N)`
 - `W`: `(K..., C_in, C_out)`
-- `a`: `(P..., C_out, N)`
+- `a`, `z`: `(P..., C_out, N)`
+
+# Type parameters
+* `Ls`, `Ps`, `Ks`: input grid, output grid and kernel window.
+* `C_in`, `C_out`: number of input and output channels.
+* `TILE`: output channels per work item.
+* `WS`: whether `W` is staged in shared memory.
+* `WN`: length of the shared buffer (`length(W)` if `WS`, otherwise `1`).
 """
-@kernel function _conv_forward_kernel!(a, @Const(x), @Const(W), @Const(b), stride::Int,
-                                       pad, ::Val{Nsp}) where Nsp
-    idx = @index(Global, NTuple)                 # (p..., c_out, n)
-    c_out = idx[Nsp+1]
-    n = idx[Nsp+2]
+@kernel function _conv_tiled_kernel!(a, z, @Const(x), @Const(W), @Const(b), act, pad,
+        stride::Int, N::Int,
+        ::Val{Ls}, ::Val{Ps}, ::Val{Ks}, ::Val{C_in}, ::Val{C_out},
+        ::Val{TILE}, ::Val{WS}, ::Val{WN}) where {Ls,Ps,Ks,C_in,C_out,TILE,WS,WN}
 
-    Ls = ntuple(d -> size(x, d), Val(Nsp))      # input grid
-    Ks = ntuple(d -> size(W, d), Val(Nsp))      # kernel window
-    C_in = size(x, Nsp+1)
-    plane = prod(Ls)                            # x: distance between channels
-    wk = prod(Ks)                               # W: distance between input channels
-    x_n = (n - 1) * plane * C_in                # x: offset of sample n
-    w_c = (c_out - 1) * wk * C_in               # W: offset of output channel c_out
+    tid = @index(Local, Linear)     # position inside the workgroup
+    WG = prod(@groupsize())         # work items per workgroup
 
-    s = zero(eltype(a))
-    @inbounds for k in CartesianIndices(Ks)        # spatial taps (outer)
-        src = ntuple(d -> _src(pad,
-                     (idx[d] - 1) * stride + k[d] - _padleft(pad, Ks[d]), Ls[d]), Val(Nsp))
-        all(i -> i > 0, src) || continue           # Zeros padding: skip tap
-        xi = x_n + LinearIndices(Ls)[src...]       # x[src..., 1, n]
-        wi = w_c + LinearIndices(Ks)[k]            # W[k, 1, c_out]
-        for _ in 1:C_in                            # channels (inner): only adds
-            s += x[xi] * W[wi]
-            xi += plane
-            wi += wk
+    # stage W in shared memory (one copy per workgroup, filled cooperatively)
+    ws = @localmem eltype(a) (WN,)
+    if WS
+        for i in tid:WG:WN
+            @inbounds ws[i] = W[i]
         end
     end
-    @inbounds a[idx...] = s + b[c_out]
+    @synchronize()
+
+    lin = @index(Global, Linear)    # position in the whole launch
+
+    N_t = cld(C_out, TILE)          # number of channel tiles
+    plane = prod(Ls)                # x: distance in memory between input channels
+    wk = prod(Ks)                   # W: distance in memory between input channels (size of one kernel window)
+    NP = prod(Ps)                   # a: distance in memory between output channels
+    total = NP * N_t * N            # number of real work items
+
+    if lin <= total
+        idx = Tuple(CartesianIndices((Ps..., N_t, N))[lin])   # (p..., t, n)
+        t = idx[end-1]                                # channel tile
+        n = idx[end]                                  # sample
+
+        x_n = (n - 1) * plane * C_in        # x: offset of sample n
+        o0 = (t - 1) * TILE                 # first output channel of tile - 1
+        wstride = wk * C_in                 # W: stride between output channels
+        wsrc = WS ? ws : W                  # resolved at compile time
+
+        acc = _zero_acc(Val(TILE), eltype(a))   # TILE accumulators in registers
+        for k in CartesianIndices(Ks)           # kernel taps
+            src = _src_tuple(pad, idx, k, stride, Val(Ls), Val(Ks))
+            if all(>(0), src)                         # skip taps outside the input
+                xi = x_n + LinearIndices(Ls)[src...]  # x[src..., 1, n]
+                wi = LinearIndices(Ks)[k]             # W[k, 1, 1]
+                for _ in 1:C_in                       # input channels
+                    acc = _acc_fma(acc, @inbounds(x[xi]), wsrc, wi, wstride, o0, Val(C_out))
+                    xi += plane
+                    wi += wk
+                end
+            end
+        end
+
+        aoff = _site_linear(idx, Val(Ps)) + (n - 1) * NP * C_out   # a[p..., 1, n]
+        _acc_store!(a, z, act, b, acc, aoff, NP, o0, Val(C_out))
+    end
 end
 
+"""
+    SMEM_BUDGET
+
+Maximum number of bytes of shared (workgroup-local) memory used for staging
+the kernel weights `W` in [`conv_tiled!`](@ref). This memory is asigned with
+[`_default_smem_budget`](@ref) function.
+
+Hardware limits per workgroup:
+* CUDA:  48 KB of static shared memory (`@localmem`)
+* Metal: 32 KB of threadgroup memory
+
+32 KB is the largest value valid on both backends. If `W` does not fit into
+this budget, the weights are read directly from global memory.
+"""
+const SMEM_BUDGET = 32 * 1024
+
+"""
+    _default_smem_budget(backend) -> Int
+
+Default shared-memory budget for [`conv_tiled!`](@ref): [`SMEM_BUDGET`](@ref)
+on GPU backends, `0` on the CPU (where staging `W` brings no benefit).
+"""
+_default_smem_budget(::KernelAbstractions.CPU) = 0
+_default_smem_budget(::KernelAbstractions.Backend) = SMEM_BUDGET
+
+"""
+    _zero_acc(Val(TILE), T) -> NTuple{TILE,T}
+
+Tuple of `TILE` zeros of type `T`, used as per-thread accumulators for `TILE`
+output channels. `TILE` is a compile-time constant, so the tuple lives in
+registers.
+"""
+@inline _zero_acc(::Val{TILE}, ::Type{T}) where {TILE,T} = ntuple(_ -> zero(T), Val(TILE))
+
+"""
+    _acc_fma(acc, xv, w, wi, wstride, o0, Val(C_out)) -> NTuple{TILE}
+
+Multiplies one input value `xv` with the weights of the `TILE` output channels
+`o0+1, ..., o0+TILE` and adds the products to the accumulators:
+
+```math
+\\mathrm{acc}_j \\leftarrow \\mathrm{acc}_j + x_v \\, W[k, c, o_0 + j], \\qquad j = 1, \\dots, \\mathrm{TILE}
+```
+
+# Arguments
+* `acc`: accumulators, `NTuple{TILE}`.
+* `xv`: input value `x[src, c, n]`.
+* `w`: weights, either shared memory or the global array `W`.
+* `wi`: linear index of `W[k, c, 1]`.
+* `wstride`: distance in `W` between two output channels, `prod(K) * C_in`.
+* `o0`: first output channel of the tile minus one.
+* `Val(C_out)`: total number of output channels. Entries with `o0 + j > C_out`
+  (ragged last tile) are left unchanged.
+"""
+@inline function _acc_fma(acc::NTuple{TILE,T}, xv::T, w, wi::Int, wstride::Int,
+                          o0::Int, ::Val{C_out}) where {TILE,T,C_out}
+    ntuple(Val(TILE)) do j
+        o = o0 + j
+        o <= C_out ? muladd(xv, @inbounds(w[wi + (o - 1) * wstride]), acc[j]) : acc[j]
+    end
+end
+
+"""
+    _acc_store!(a, z, act, b, acc, aoff, ostride, o0, Val(C_out))
+
+Adds the bias, applies the activation and writes the results of one output
+site for the `TILE` output channels of the tile:
+
+```math
+a_{p,o,n} = \\mathrm{acc}_{o - o_0} + b_o, \\qquad z_{p,o,n} = \\mathrm{act}(a_{p,o,n})
+```
+
+`a === z` is allowed (in-place).
+
+# Arguments
+* `aoff`: linear index of `a[p..., 1, n]`.
+* `ostride`: distance in `a` between two output channels, `prod(P)`.
+* `o0`, `Val(C_out)`: as in [`_acc_fma`](@ref).
+"""
+@inline function _acc_store!(a, z, act, b, acc::NTuple{TILE,T}, aoff::Int, ostride::Int,
+                             o0::Int, ::Val{C_out}) where {TILE,T,C_out}
+    ntuple(Val(TILE)) do j
+        o = o0 + j
+        if o <= C_out
+            v = acc[j] + @inbounds(b[o])
+            i = aoff + (o - 1) * ostride
+            @inbounds a[i] = v
+            @inbounds z[i] = act(v)
+        end
+        nothing
+    end
+    nothing
+end
+
+"""
+    _src_tuple(pad, idx, k, stride, Val(Ls), Val(Ks)) -> NTuple{Nsp,Int}
+
+Input source index of kernel tap `k` for output site `p = idx[1:Nsp]`, per
+spatial dimension `d`:
+
+```math
+s_d = \\mathrm{src}\\big(\\mathrm{pad},\\; (p_d - 1)\\,\\mathrm{stride} + k_d - \\mathrm{padleft}_d,\\; L_d\\big)
+```
+
+An entry `0` marks a tap outside the input (e.g. `Zeros` padding) that is
+skipped. Any [`PadMode`](@ref) works for which `_src` and `_padleft` are
+defined.
+"""
+@inline function _src_tuple(pad, idx, k, stride, ::Val{Ls}, ::Val{Ks}) where {Ls,Ks}
+    ntuple(d -> _src(pad, (idx[d] - 1) * stride + k[d] - _padleft(pad, Ks[d]), Ls[d]),
+           Val(length(Ls)))
+end
+
+"""
+    _site_linear(idx, Val(Ps)) -> Int
+
+Linear index of the output site `p = idx[1:Nsp]` in the output grid `Ps`.
+"""
+@inline _site_linear(idx, ::Val{Ps}) where Ps =
+    LinearIndices(Ps)[ntuple(d -> idx[d], Val(length(Ps)))...]

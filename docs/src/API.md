@@ -75,7 +75,15 @@ _src
 _tap_inv
 _check_input
 _input_shape
-_conv_forward_kernel!
+conv_tiled!
+_conv_tiled_kernel!
+SMEM_BUDGET
+_default_smem_budget
+_zero_acc
+_acc_fma
+_acc_store!
+_src_tuple
+_site_linear
 _pool_forward_kernel!
 LayerNorm_multiforward
 

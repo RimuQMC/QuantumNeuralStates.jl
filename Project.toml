@@ -1,6 +1,6 @@
 name = "QuantumNeuralStates"
 uuid = "85459f3a-8d13-41c4-989d-5d8502c78558"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["xZoidyy <krsek.k@gmail.com>"]
 
 [deps]
